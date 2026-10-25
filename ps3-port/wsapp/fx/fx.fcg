@@ -1,0 +1,23 @@
+float luma(float3 c) { return dot(c, float3(0.299f, 0.587f, 0.114f)); }
+float4 main(float2 uv : TEXCOORD0, float2 tx : TEXCOORD1, uniform sampler2D tex) : COLOR
+{
+    float3 rgbM  = tex2D(tex, uv).rgb;
+    float3 rgbNW = tex2D(tex, uv + float2(-1.0f, -1.0f) * tx).rgb;
+    float3 rgbNE = tex2D(tex, uv + float2( 1.0f, -1.0f) * tx).rgb;
+    float3 rgbSW = tex2D(tex, uv + float2(-1.0f,  1.0f) * tx).rgb;
+    float3 rgbSE = tex2D(tex, uv + float2( 1.0f,  1.0f) * tx).rgb;
+    float lM = luma(rgbM), lNW = luma(rgbNW), lNE = luma(rgbNE), lSW = luma(rgbSW), lSE = luma(rgbSE);
+    float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+    float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+    float2 dir;
+    dir.x = -((lNW + lNE) - (lSW + lSE));
+    dir.y =  ((lNW + lSW) - (lNE + lSE));
+    float dirReduce = max((lNW + lNE + lSW + lSE) * 0.03125f, 0.0078125f);
+    float rcpDirMin = 1.0f / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+    dir = min(float2(8.0f, 8.0f), max(float2(-8.0f, -8.0f), dir * rcpDirMin)) * tx;
+    float3 rgbA = 0.5f * (tex2D(tex, uv + dir * (1.0f/3.0f - 0.5f)).rgb + tex2D(tex, uv + dir * (2.0f/3.0f - 0.5f)).rgb);
+    float3 rgbB = rgbA * 0.5f + 0.25f * (tex2D(tex, uv + dir * -0.5f).rgb + tex2D(tex, uv + dir * 0.5f).rgb);
+    float lB = luma(rgbB);
+    float3 r = (lB < lMin || lB > lMax) ? rgbA : rgbB;
+    return float4(r, 1.0f);
+}

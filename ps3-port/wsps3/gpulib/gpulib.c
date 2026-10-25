@@ -441,8 +441,10 @@ static inline void do_vram_line(int x, int y, uint16_t *mem, int l,
     memcpy(vram, mem, l * 2);
 }
 
+extern void ws_spu_sync(void);
 static int do_vram_io(uint32_t *data, int count, int is_read)
 {
+  ws_spu_sync();
   int count_initial = count;
   uint32_t r6 = gpu.ex_regs[6] << 15;
   uint16_t *sdata = (uint16_t *)data;
@@ -536,6 +538,7 @@ static void finish_vram_transfer(int is_read)
 
 static void do_vram_copy(const uint32_t *params, int *cpu_cycles)
 {
+  ws_spu_sync();
   const uint32_t sx =  GETLE32(&params[0]) & 0x3FF;
   const uint32_t sy = (GETLE32(&params[0]) >> 16) & 0x1FF;
   const uint32_t dx =  GETLE32(&params[1]) & 0x3FF;

@@ -63,7 +63,7 @@ static void hr_poly_dirty(const short *s,int nv)
              if(hr_fast) { if(TEX) hr_tex_sync(baseAddr); hr_poly_dirty(hs_,NV); } \
              else { __VA_ARGS__; } \
              hr_enter(hs_); __VA_ARGS__; hr_leave(); } \
-  else { if(hr_dirty) hr_sync_all(); __VA_ARGS__; } } while(0)
+  else { if(hr_dirty) hr_sync_all(); spu_cap=ws_spu_render_on; __VA_ARGS__; spu_cap=0; } } while(0)
 
 #define SPR_UP(w,h) do { if(hiOn) hr_up_clip(lx0+PSXDisplay.DrawOffset.x, ly0+PSXDisplay.DrawOffset.y, (w), (h)); } while(0)
 

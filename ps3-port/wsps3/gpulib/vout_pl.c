@@ -72,8 +72,10 @@ static void check_mode_change(int force)
   }
 }
 
+extern void ws_spu_sync(void);
 void vout_update(void)
 {
+  ws_spu_sync();
   int bpp = (gpu.status & PSX_GPU_STATUS_RGB24) ? 24 : 16;
   uint8_t *vram = (uint8_t *)gpu.vram;
   int src_x = gpu.screen.src_x;

@@ -119,6 +119,82 @@ void ws_spu_selftest(void)
     free(src); free(dst);
 }
 
-/* SPU renderer hooks (work in progress): capture is never enabled yet, so these are no-ops */
-void ws_spu_cap_add(const spu_prim_t *p) { (void)p; }
-void ws_spu_sync(void) { }
+/* ------------------------------------------------------------------ */
+/* SPU polygon renderer: the GPU thread records polygon primitives; the SPU workers draw them into VRAM */
+#define WS_LISTCAP 6144
+static spu_prim_t *plist[2];
+static int pcur, pn, pinflight;
+static void *spu_vram;
+volatile int ws_spu_busy;        /* records pending or a job in flight */
+int ws_spu_render_on;            /* set by the menu */
+unsigned long long ws_spu_stat[6]; /* 0 jobs, 1 prims, 2 sync waits, 3 wait ticks, 4 max spu ticks, 5 flush-by-full */
+
+void ws_spu_set_vram(void *v) { spu_vram = v; }
+int ws_spu_render_ready(void) { return nspu > 0 && plist[0] && spu_vram && ((uintptr_t)spu_vram & 15) == 0; }
+
+static void spu_alloc(void)
+{
+    if (plist[0]) return;
+    plist[0] = (spu_prim_t *)memalign(128, sizeof(spu_prim_t) * WS_LISTCAP);
+    plist[1] = (spu_prim_t *)memalign(128, sizeof(spu_prim_t) * WS_LISTCAP);
+}
+int ws_spu_render_init(void)
+{
+    if (!nspu) return 0;
+    spu_alloc();
+    return plist[0] && plist[1];
+}
+
+static int spu_poll(void)
+{
+    int i;
+    for (i = 0; i < nspu; i++) if (*(volatile u32 *)&sc[i].done != (u32)spu_seq) return 0;
+    return 1;
+}
+static void spu_wait_inflight(void)
+{
+    unsigned long long t0;
+    int i;
+    if (!pinflight) return;
+    if (!spu_poll()) {
+        t0 = tb(); ws_spu_stat[2]++;
+        while (!spu_poll()) {
+            if (tb() - t0 > 79800000ULL * 3) { SysPrintf("spu: render job timeout, disabling SPU renderer\n"); ws_spu_render_on = 0; break; }
+        }
+        ws_spu_stat[3] += tb() - t0;
+    }
+    __sync_synchronize();
+    for (i = 0; i < nspu; i++) if (sc[i].res[0] > ws_spu_stat[4]) ws_spu_stat[4] = sc[i].res[0];
+    pinflight = 0;
+}
+static void spu_submit(void)
+{
+    int i;
+    if (!pn) return;
+    spu_wait_inflight();
+    ws_spu_begin();
+    __sync_synchronize();
+    for (i = 0; i < nspu; i++)
+        ws_spu_kick(i, SJ_RENDER, ea_of(plist[pcur]), pn, ea_of(spu_vram), nspu);
+    ws_spu_stat[0]++; ws_spu_stat[1] += pn;
+    pinflight = 1; pcur ^= 1; pn = 0;
+}
+void ws_spu_cap_add(const spu_prim_t *p)
+{
+    if (pn >= WS_LISTCAP) { ws_spu_stat[5]++; spu_submit(); }
+    plist[pcur][pn++] = *p;
+    ws_spu_busy = 1;
+}
+/* start drawing what has been recorded so far without waiting for it */
+void ws_spu_flush(void)
+{
+    if (pn && (!pinflight || spu_poll())) spu_submit();
+}
+/* make VRAM current: draw everything recorded and wait */
+void ws_spu_sync(void)
+{
+    if (!ws_spu_busy) return;
+    spu_submit();
+    spu_wait_inflight();
+    ws_spu_busy = 0;
+}

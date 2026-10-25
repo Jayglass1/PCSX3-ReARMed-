@@ -145,6 +145,8 @@ static void hw_init(void)
 #include "fx/fx_vpo.h"
 #include "fx/fx_fpo.h"
 static int ws_fxaa = 1, fx_ok = 0;
+static int ws_spu_pref = 1;
+extern int ws_spu_render_on; extern int ws_spu_render_ready(void);
 static rsxVertexProgram *fx_vp; static rsxFragmentProgram *fx_fp;
 static void *fx_vpu, *fx_fpu; static u32 fx_fpoff;
 static float *fx_vb; static u32 fx_vboff;
@@ -650,6 +652,7 @@ static void menu(void)
         if (p & 512) ws_hires = (ws_hires + 1) % 3;
         if (p & 1024) ws_analog ^= 1;
         if (p & 2048) ws_fxaa ^= 1;
+        if (p & 16) ws_spu_pref ^= 1;
         if ((p & 4096) && clk_idx > 0) clk_idx--;
         if ((p & 8192) && clk_idx < 6) clk_idx++;
         ws_cycle_mult = 17500 / ws_clock_pct;
@@ -680,6 +683,7 @@ static void menu(void)
                 u64 tr0 = sysGetSystemTime();
                 unsigned long long pg0 = ws_prof[0] + ws_prof[1], ps0 = ws_prof[2], pc0 = ws_prof[5], pe0 = ws_prof[3];
                 extern unsigned long long ws_chd_io, ws_hcx[4]; unsigned long long q_io = ws_chd_io, q_h0 = ws_hcx[0], q_h1 = ws_hcx[1], q_h2 = ws_hcx[2], q_h3 = ws_hcx[3];
+                ws_spu_render_on = ws_spu_pref && ws_spu_render_ready();
                 ws_where = 1; retro_run(); ws_where = 2;
                 u64 trd = sysGetSystemTime() - tr0;
                 tr_run += trd;
@@ -741,6 +745,8 @@ static void menu(void)
         draw_text(40, 200, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "CPU clock: %d%%   [Left/Right] change   (below 100 = faster emulation, over 100 = fewer game slowdowns, slower)", ws_clock_pct);
         draw_text(40, 226, line, 0x0080FF80, 2);
+        snprintf(line, sizeof line, "SPU renderer: %s   [Start] toggle   (draws 3D polygons on the Cell SPUs; faster fights)", ws_spu_pref ? "On" : "Off");
+        draw_text(40, 252, line, 0x0080FF80, 2);
         if (!ngames) {
             draw_text(40, 170, "No games found. Put .cue/.bin, .chd, .iso or .pbp in:", 0x00FFFFFF, 2);
             draw_text(40, 230, BASE "/roms  or  /dev_hdd0/PSXISO", 0x00FFFF80, 2);
@@ -748,8 +754,8 @@ static void menu(void)
         }
         for (int i = top; i < ngames && i < top + 11; i++) {
             const char *n = strrchr(games[i], '/'); n = n ? n + 1 : games[i];
-            draw_text(40, 262 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
-            if (i == sel) draw_text(16, 262 + (i - top) * 32, ">", 0x00FFFF00, 2);
+            draw_text(40, 290 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
+            if (i == sel) draw_text(16, 290 + (i - top) * 32, ">", 0x00FFFF00, 2);
         }
         draw_text(40, 110, stagemsg, 0x00FF8080, 2);
         draw_text(40, sh - 50, "X: start   Triangle: CPU mode   Select: picture   Circle: 2x   L2: pad   SELECT+START in game: back to list   PS button: quit", 0x00C0C0C0, 2);
@@ -768,7 +774,7 @@ int main(int argc, char **argv)
     fx_init();
     { char hl[80]; snprintf(hl, sizeof hl, "video: hardware scaler %s", hw_ok ? "on" : "OFF (cpu fallback)"); log_line(hl); }
     { extern int ws_spu_init(int); extern void ws_spu_selftest(void);
-      if (ws_spu_init(5)) ws_spu_selftest(); }
+      if (ws_spu_init(5)) { ws_spu_selftest(); { extern int ws_spu_render_init(void); ws_spu_render_init(); } } }
     ioPadInit(MAX_PORT_NUM);
     audio_start();
     { sys_ppu_thread_t wt; sysThreadCreate(&wt, watchdog, NULL, 1500, 0x4000, THREAD_JOINABLE, (char *)"ws_watch"); }

@@ -370,6 +370,7 @@ static void set_vram(void *vram)
  psxVub=vram;
  psxVuw=(unsigned short *)psxVub;
  psxDst=psxVuw; dshift=10;
+ ws_spu_set_vram(psxVuw);
  psxVuw_eom=psxVuw+1024*512;                           // pre-calc of end of vram
 }
 
@@ -424,6 +425,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 {
   int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
   if (!hiOn && hr_dirty) hr_sync_all();
+  if (hiOn) ws_spu_sync();
   unsigned int cmd = 0, len;
   uint32_t *list_start = list;
   uint32_t *list_end = list + list_len;
@@ -439,6 +441,8 @@ int do_cmd_list(uint32_t *list, int list_len,
       break;
     }
 
+    /* anything that touches VRAM other than the recorded polygons needs the SPU queue drained first */
+    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0xe0))) ws_spu_sync();
 #ifndef TEST
     if (0x80 <= cmd && cmd < 0xe0)
     {
@@ -557,6 +561,7 @@ breakloop:
   *cycles_last = cpu_cycles;
   *last_cmd = cmd;
   { extern volatile unsigned long ws_step; ws_step = 2; }
+  ws_spu_flush();
   return list - list_start;
 }
 
@@ -593,6 +598,7 @@ void renderer_set_interlace(int enable, int is_odd)
 
 void renderer_sync(void)
 {
+ ws_spu_sync();
 }
 
 void renderer_notify_update_lace(int updated)

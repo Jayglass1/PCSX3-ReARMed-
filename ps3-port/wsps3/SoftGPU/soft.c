@@ -2415,6 +2415,10 @@ static inline BOOL SetupSections_GT4(short x1, short y1, short x2, short y2, sho
 static int spu_cap;
 extern void ws_spu_cap_add(const spu_prim_t *p);
 extern void ws_spu_sync(void);
+extern void ws_spu_flush(void);
+extern void ws_spu_set_vram(void *v);
+extern volatile int ws_spu_busy;
+extern int ws_spu_render_on;
 static void spu_cap_poly(int nv,int pk,int tp,const short *x,const short *y,const short *tx,const short *ty,short clx,short cly,const int *col)
 {
  spu_prim_t p; int i;

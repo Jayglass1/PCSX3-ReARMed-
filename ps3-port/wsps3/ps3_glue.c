@@ -678,6 +678,11 @@ void ws_prof_str(char *b, int n, int runs)
     snprintf(b, n, "prof ms/run: gpuchain=%.2f gpuwr=%.2f spu=%.2f (channels=%.2f) exec=%.2f | per run: flush=%.2f recompile=%.1f enters=%.1f",
              ws_prof[0] * k, ws_prof[1] * k, ws_prof[2] * k, ws_prof[4] * k, ws_prof[3] * k,
              (double)ws_dyn[0] / runs, (double)ws_dyn[1] / runs, (double)ws_dyn[2] / runs);
+    { extern unsigned long long ws_spu_stat[6]; extern int ws_spu_render_on; size_t l = strlen(b);
+      snprintf(b + l, n - l, " | spur=%d jobs/run=%.1f prims/run=%.0f syncwaits/run=%.1f waitms/run=%.2f maxspu_ms=%.2f full=%llu", ws_spu_render_on,
+               (double)ws_spu_stat[0] / (runs ? runs : 1), (double)ws_spu_stat[1] / (runs ? runs : 1), (double)ws_spu_stat[2] / (runs ? runs : 1),
+               ws_spu_stat[3] * k, ws_spu_stat[4] / 79800.0 * 1.0 / 1.0, ws_spu_stat[5]);
+      memset(ws_spu_stat, 0, sizeof ws_spu_stat); }
     memset(ws_dyn, 0, sizeof ws_dyn);
     memset(ws_prof, 0, sizeof ws_prof);
 }

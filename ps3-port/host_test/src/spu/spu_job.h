@@ -46,8 +46,10 @@ typedef struct {
     u32w worker;       /* worker index */
     u64w ea_a, ea_b;   /* buffers: a = prim list, b = VRAM */
     u32w n_a, n_b;     /* a = prim count, b = number of workers */
-    u32w res[4];       /* results */
-    u32w pad[16];
+    u32w res[8];       /* results / profile */
+    u32w padx[2];
+    u32w dbg[4];       /* SPU progress breadcrumbs (16-byte aligned: offset 80) */
+    u32w pad[8];
 } __attribute__((aligned(128))) spu_ctl_t;
 
 #endif

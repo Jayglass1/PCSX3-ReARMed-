@@ -17,6 +17,10 @@ static unsigned char sr_tc[SR_CLINES * 128] __attribute__((aligned(128)));
 static unsigned short sr_tag[SR_CLINES];        /* line+1, 0 = empty */
 static spu_prim_t sr_list[SR_CHUNK] __attribute__((aligned(128)));
 static u64w sr_vram;
+#ifndef SR_TICK
+ #define SR_TICK() 0u
+#endif
+static unsigned sr_p[8];   /* 0 miss ticks, 1 misses, 2 band dma ticks, 3 draws, 4 draw ticks, 5 list dma ticks */
 #ifdef HOST_TEST
 int sr_oob;
 #endif
@@ -24,13 +28,19 @@ int sr_oob;
 extern void spu_dma_get(void *ls, u64w ea, unsigned size);
 extern void spu_dma_put(void *ls, u64w ea, unsigned size);
 
-static inline unsigned sr_slot(unsigned line) { return ((line >> 4) * 5 + (line & 15)) & (SR_CLINES - 1); }
+#ifndef SR_DBG
+ #define SR_DBG(band, idx, kind)
+#endif
+#define SR_AI static inline __attribute__((always_inline))
+SR_AI unsigned sr_slot(unsigned line) { return ((line >> 4) * 5 + (line & 15)) & (SR_CLINES - 1); }
 static void sr_fill(unsigned slot, unsigned line)
 {
+    unsigned t0 = SR_TICK();
     spu_dma_get(sr_tc + slot * 128, sr_vram + (u64w)line * 128, 128);
     sr_tag[slot] = (unsigned short)(line + 1);
+    sr_p[0] += t0 - SR_TICK(); sr_p[1]++;
 }
-static inline unsigned char sr_texb(uint32_t off)
+SR_AI unsigned char sr_texb(uint32_t off)
 {
     unsigned line, s;
 #ifdef HOST_TEST
@@ -45,7 +55,7 @@ static inline unsigned char sr_texb(uint32_t off)
 #else
  #define SR_LE16(p) (*(const unsigned short *)(p))
 #endif
-static inline unsigned short sr_texw(uint32_t idx)
+SR_AI unsigned short sr_texw(uint32_t idx)
 {
 #ifdef HOST_TEST
     if ((idx << 1) > 0xfffff) sr_oob++;
@@ -75,6 +85,7 @@ static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, unsigned worker, u
 {
     unsigned band, i, k;
     sr_vram = vram_ea;
+    memset(sr_p, 0, sizeof sr_p);
     memset(sr_tag, 0, sizeof sr_tag);
     for (band = worker; band < SR_BANDS; band += nw) {
         int by0 = band * SPU_BAND_H, by1 = by0 + SPU_BAND_H, loaded = 0;
@@ -85,20 +96,22 @@ static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, unsigned worker, u
             for (k = 0; k < m; k++) {
                 const spu_prim_t *p;
                 /* cheap cull needs the record; fetch the chunk lazily only once per band pass */
-                if (!fetched) { sr_get_big(sr_list, list_ea + (u64w)i * sizeof(spu_prim_t), m * sizeof(spu_prim_t)); fetched = 1; }
+                if (!fetched) { unsigned t1 = SR_TICK(); sr_get_big(sr_list, list_ea + (u64w)i * sizeof(spu_prim_t), m * sizeof(spu_prim_t)); fetched = 1; sr_p[5] += t1 - SR_TICK(); }
                 p = &sr_list[k];
                 if (p->y1 < by0 || p->y0 >= by1) continue;
                 if (!loaded) {
                     /* rows by0-1 .. by1 (guards included), clamped to VRAM */
+                    unsigned t2 = SR_TICK();
                     int r0 = by0 - 1 < 0 ? 0 : by0 - 1, r1 = by1 > 511 ? 511 : by1;
                     sr_get_big(sr_band + (r0 - (by0 - 1)) * SPU_VSTRIDE * 2, vram_ea + (u64w)r0 * SPU_VSTRIDE * 2, (r1 - r0 + 1) * SPU_VSTRIDE * 2);
-                    loaded = 1;
+                    loaded = 1; sr_p[2] += t2 - SR_TICK();
                 }
-                spu_draw_poly(p, by0, by1);
+                SR_DBG(band, i + k, p->pk * 16 + p->nv * 4 + p->tp);
+                { unsigned t3 = SR_TICK(); spu_draw_poly(p, by0, by1); sr_p[4] += t3 - SR_TICK(); sr_p[3]++; }
             }
         }
-        if (loaded)
-            sr_put_big(sr_band + SPU_VSTRIDE * 2, vram_ea + (u64w)by0 * SPU_VSTRIDE * 2, SPU_BAND_H * SPU_VSTRIDE * 2);
+        if (loaded) { unsigned t4 = SR_TICK();
+            sr_put_big(sr_band + SPU_VSTRIDE * 2, vram_ea + (u64w)by0 * SPU_VSTRIDE * 2, SPU_BAND_H * SPU_VSTRIDE * 2); sr_p[2] += t4 - SR_TICK(); }
     }
 }
 #endif

@@ -11,6 +11,10 @@ static unsigned char buf[2][4096] __attribute__((aligned(128)));
 static void wait_tag(unsigned t) { mfc_write_tag_mask(1u << t); mfc_read_tag_status_all(); }
 void spu_dma_get(void *ls, u64w ea, unsigned size) { mfc_get(ls, ea, size, 4, 0, 0); wait_tag(4); }
 void spu_dma_put(void *ls, u64w ea, unsigned size) { mfc_put(ls, ea, size, 4, 0, 0); wait_tag(4); }
+#define SR_TICK() spu_readch(SPU_RdDec)
+static u32w sr_dbgv[4] __attribute__((aligned(16)));
+static u64w sr_dbg_ea;
+#define SR_DBG(band, idx, kind) do { sr_dbgv[0] = (band); sr_dbgv[1] = (idx); sr_dbgv[2] = (kind); sr_dbgv[3]++; mfc_putf(sr_dbgv, sr_dbg_ea, 16, 6, 0, 0); } while (0)
 #include "spu_render.h"
 
 static void job_test(void)
@@ -45,8 +49,9 @@ int main(unsigned long long ea, unsigned long long idx, unsigned long long a3, u
         unsigned sig = spu_read_signal1();
         mfc_get(&ctl, ea, sizeof ctl, TAG, 0, 0); wait_tag(TAG);
         if (ctl.cmd == SJ_QUIT) break;
+        sr_dbg_ea = ea + 80; sr_dbgv[3] = 0;
         if (ctl.cmd == SJ_TEST) job_test();
-        else if (ctl.cmd == SJ_RENDER) { unsigned t0 = spu_readch(SPU_RdDec); sr_render(ctl.ea_a, ctl.n_a, ctl.ea_b, ctl.worker, ctl.n_b); ctl.res[0] = t0 - spu_readch(SPU_RdDec); }
+        else if (ctl.cmd == SJ_RENDER) { unsigned t0 = spu_readch(SPU_RdDec); sr_render(ctl.ea_a, ctl.n_a, ctl.ea_b, ctl.worker, ctl.n_b); ctl.res[0] = t0 - spu_readch(SPU_RdDec); ctl.res[1] = sr_p[0]; ctl.res[2] = sr_p[1]; ctl.res[3] = sr_p[2]; ctl.res[4] = sr_p[3]; ctl.res[5] = sr_p[4]; ctl.res[6] = sr_p[5]; }
         ctl.done = sig;
         mfc_put(&ctl, ea, sizeof ctl, TAG, 0, 0); wait_tag(TAG);
     }

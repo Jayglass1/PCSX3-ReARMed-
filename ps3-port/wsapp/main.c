@@ -144,7 +144,9 @@ static void hw_init(void)
 #include <rsx/rsx_program.h>
 #include "fx/fx_vpo.h"
 #include "fx/fx_fpo.h"
-static int ws_fxaa = 1, fx_ok = 0;
+static int ws_fxaa = 3, fx_ok = 0;   /* 0 off, 1..4 = 2x 4x 8x 16x edge search reach */
+static const int fx_span[5] = { 0, 2, 4, 8, 16 };
+extern int ws_cd_turbo; static int cd_turbo_idx = 0; static const int cd_turbo_v[4] = { 1, 2, 4, 8 };
 static int ws_spu_pref = 1;
 extern int ws_spu_render_on; extern int ws_spu_render_ready(void);
 static rsxVertexProgram *fx_vp; static rsxFragmentProgram *fx_fp;
@@ -163,7 +165,7 @@ static void fx_init(void)
     memcpy(fb, fx_fpu, fps);
     rsxAddressToOffset(fb, &fx_fpoff);
     fx_tex = rsxFragmentProgramGetAttrib(fx_fp, "tex");
-    fx_vb = (float *)rsxMemalign(128, 4 * 7 * 4);
+    fx_vb = (float *)rsxMemalign(128, 4 * 8 * 4);
     fx_ib = (u16 *)rsxMemalign(128, 16);
     void *dp = rsxMemalign(64, sw * sh * 4);
     if (!fx_vb || !fx_ib || !dp || !fx_tex) return;
@@ -203,9 +205,10 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
     float x0 = (float)ox / sw * 2.f - 1.f, x1 = (float)(ox + dw) / sw * 2.f - 1.f;
     float y0 = 1.f - (float)oy / sh * 2.f, y1 = 1.f - (float)(oy + dh) / sh * 2.f;
     float tx = 1.0f / w, ty = 1.0f / h;
-    float v[4][7] = {
-        { x0, y0, 0, 0, 0, tx, ty }, { x1, y0, 0, 1, 0, tx, ty },
-        { x1, y1, 0, 1, 1, tx, ty }, { x0, y1, 0, 0, 1, tx, ty } };
+    float spn = (float)fx_span[ws_fxaa];
+    float v[4][8] = {
+        { x0, y0, 0, 0, 0, tx, ty, spn }, { x1, y0, 0, 1, 0, tx, ty, spn },
+        { x1, y1, 0, 1, 1, tx, ty, spn }, { x0, y1, 0, 0, 1, tx, ty, spn } };
     memcpy(fx_vb, v, sizeof v);
     __asm__ volatile("sync" : : : "memory");
 
@@ -229,9 +232,10 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
     rsxTextureFilter(ctx, unit, 0, GCM_TEXTURE_LINEAR, GCM_TEXTURE_LINEAR, GCM_TEXTURE_CONVOLUTION_QUINCUNX);
     rsxTextureWrapMode(ctx, unit, GCM_TEXTURE_CLAMP_TO_EDGE, GCM_TEXTURE_CLAMP_TO_EDGE, GCM_TEXTURE_CLAMP_TO_EDGE, 0, GCM_TEXTURE_ZFUNC_LESS, 0);
 
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_POS, 0, fx_vboff, 28, 3, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX0, 0, fx_vboff + 12, 28, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX1, 0, fx_vboff + 20, 28, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_POS, 0, fx_vboff, 32, 3, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX0, 0, fx_vboff + 12, 32, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX1, 0, fx_vboff + 20, 32, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX2, 0, fx_vboff + 28, 32, 1, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
     rsxLoadVertexProgram(ctx, fx_vp, fx_vpu);
     rsxLoadFragmentProgramLocation(ctx, fx_fp, fx_fpoff, GCM_LOCATION_RSX);
     rsxSetUserClipPlaneControl(ctx, GCM_USER_CLIP_PLANE_DISABLE, GCM_USER_CLIP_PLANE_DISABLE, GCM_USER_CLIP_PLANE_DISABLE,
@@ -609,7 +613,7 @@ static u32 btns(int p)
     u32 b = 0;
     padData *d = &pd[p];
     if (d->BTN_UP) b |= 1; if (d->BTN_DOWN) b |= 2; if (d->BTN_CROSS) b |= 4; if (d->BTN_TRIANGLE) b |= 8;
-    if (d->BTN_START) b |= 16; if (d->BTN_SELECT) b |= 32; if (d->BTN_L1) b |= 64; if (d->BTN_R1) b |= 128; if (d->BTN_SQUARE) b |= 256; if (d->BTN_CIRCLE) b |= 512; if (d->BTN_L2) b |= 1024; if (d->BTN_R2) b |= 2048; if (d->BTN_LEFT) b |= 4096; if (d->BTN_RIGHT) b |= 8192;
+    if (d->BTN_START) b |= 16; if (d->BTN_SELECT) b |= 32; if (d->BTN_L1) b |= 64; if (d->BTN_R1) b |= 128; if (d->BTN_SQUARE) b |= 256; if (d->BTN_CIRCLE) b |= 512; if (d->BTN_L2) b |= 1024; if (d->BTN_R2) b |= 2048; if (d->BTN_LEFT) b |= 4096; if (d->BTN_RIGHT) b |= 8192; if (d->BTN_L3) b |= 16384;
     return b;
 }
 static u32 pressed(void)
@@ -651,7 +655,8 @@ static void menu(void)
         if (p & 32) ws_sharp ^= 1;
         if (p & 512) ws_hires = (ws_hires + 1) % 3;
         if (p & 1024) ws_analog ^= 1;
-        if (p & 2048) ws_fxaa ^= 1;
+        if (p & 2048) ws_fxaa = (ws_fxaa + 1) % 5;
+        if (p & 16384) { cd_turbo_idx = (cd_turbo_idx + 1) % 4; ws_cd_turbo = cd_turbo_v[cd_turbo_idx]; }
         if (p & 16) ws_spu_pref ^= 1;
         if ((p & 4096) && clk_idx > 0) clk_idx--;
         if ((p & 8192) && clk_idx < 6) clk_idx++;
@@ -688,8 +693,8 @@ static void menu(void)
                 u64 trd = sysGetSystemTime() - tr0;
                 tr_run += trd;
                 { static unsigned o17, o20; if (trd > 17500) o17++; if (trd > 20000) o20++;
-                  if (((rf + 1) % 1800) == 0) { char ob[80]; snprintf(ob, sizeof ob, "slow runs this window: >17.5ms %u, >20ms %u", o17, o20); log_line(ob); o17 = o20 = 0; } }
-                if (trd > 22000 && rf > 3 && ((rf % 1800) != 0)) {
+                  if (((rf + 1) % 600) == 0) { char ob[80]; snprintf(ob, sizeof ob, "slow runs this window: >17.5ms %u, >20ms %u", o17, o20); log_line(ob); o17 = o20 = 0; } }
+                if (trd > 22000 && rf > 3 && ((rf % 600) != 0)) {
                     static unsigned nst; if (nst++ < 60) {
                         char sb[400]; double k = 1000.0 / 79800000.0;
                         snprintf(sb, sizeof sb, "stall: run %u took %.1f ms (exec %.1f gpu %.1f spu %.1f chd %.1f)", rf, trd / 1000.0, (ws_prof[3] - pe0) * k,
@@ -698,12 +703,12 @@ static void menu(void)
                     }
                 }
                 rf++; run_count = rf;
-                if (rf <= 3 || (rf % 1800) == 0) {
+                if (rf <= 3 || (rf % 600) == 0) {
                     snprintf(line, sizeof line, "run: %u runs, %u video frames, %ld s, last %ux%u px0=%08x", rf, vf,
                              (long)(time(NULL) - t0), lw, lh, lpx);
                     log_line(line);
-                    if (rf > 3) { char pb[600]; ws_prof_str(pb, sizeof pb, 1800);
-                        snprintf(line, sizeof line, "%s | run=%.2fms present(total)=%.2fms/run", pb, tr_run / 1800000.0, tr_pres / 1800000.0);
+                    if (rf > 3) { char pb[1400]; ws_prof_str(pb, sizeof pb, 600);
+                        snprintf(line, sizeof line, "%s | run=%.2fms present(total)=%.2fms/run", pb, tr_run / 600000.0, tr_pres / 600000.0);
                         log_line(line); tr_run = tr_pres = 0; }
                 }
                 ws_where = 3; if (frame_have) { u64 tp0 = sysGetSystemTime(); present(); tr_pres += sysGetSystemTime() - tp0; frame_have = 0; vf++; }
@@ -741,12 +746,14 @@ static void menu(void)
         draw_text(40, 148, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "Controller: %s   [L2] toggle   (DualShock: games enable the sticks themselves)", ws_analog ? "DualShock" : "Digital");
         draw_text(40, 174, line, 0x0080FF80, 2);
-        snprintf(line, sizeof line, "FXAA: %s   [R2] toggle   (smooths jagged edges; Smooth picture only)", ws_fxaa ? "On" : "Off");
+        snprintf(line, sizeof line, "FXAA: %s   [R2] cycle   (anti-aliasing, Off/2x/4x/8x/16x edge reach; Smooth picture only)", ws_fxaa ? (ws_fxaa == 1 ? "2x" : ws_fxaa == 2 ? "4x" : ws_fxaa == 3 ? "8x" : "16x") : "Off");
         draw_text(40, 200, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "CPU clock: %d%%   [Left/Right] change   (below 100 = faster emulation, over 100 = fewer game slowdowns, slower)", ws_clock_pct);
         draw_text(40, 226, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "SPU renderer: %s   [Start] toggle   (draws 3D polygons on the Cell SPUs; faster fights)", ws_spu_pref ? "On" : "Off");
         draw_text(40, 252, line, 0x0080FF80, 2);
+        snprintf(line, sizeof line, "Turbo CD: %s   [L3] cycle   (faster disc loading; data reads only, music/video stay normal)", cd_turbo_v[cd_turbo_idx] == 1 ? "Off" : cd_turbo_idx == 1 ? "2x" : cd_turbo_idx == 2 ? "4x" : "8x");
+        draw_text(40, 278, line, 0x0080FF80, 2);
         if (!ngames) {
             draw_text(40, 170, "No games found. Put .cue/.bin, .chd, .iso or .pbp in:", 0x00FFFFFF, 2);
             draw_text(40, 230, BASE "/roms  or  /dev_hdd0/PSXISO", 0x00FFFF80, 2);
@@ -754,8 +761,8 @@ static void menu(void)
         }
         for (int i = top; i < ngames && i < top + 11; i++) {
             const char *n = strrchr(games[i], '/'); n = n ? n + 1 : games[i];
-            draw_text(40, 290 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
-            if (i == sel) draw_text(16, 290 + (i - top) * 32, ">", 0x00FFFF00, 2);
+            draw_text(40, 316 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
+            if (i == sel) draw_text(16, 316 + (i - top) * 32, ">", 0x00FFFF00, 2);
         }
         draw_text(40, 110, stagemsg, 0x00FF8080, 2);
         draw_text(40, sh - 50, "X: start   Triangle: CPU mode   Select: picture   Circle: 2x   L2: pad   SELECT+START in game: back to list   PS button: quit", 0x00C0C0C0, 2);

@@ -678,11 +678,19 @@ void ws_prof_str(char *b, int n, int runs)
     snprintf(b, n, "prof ms/run: gpuchain=%.2f gpuwr=%.2f spu=%.2f (channels=%.2f) exec=%.2f | per run: flush=%.2f recompile=%.1f enters=%.1f",
              ws_prof[0] * k, ws_prof[1] * k, ws_prof[2] * k, ws_prof[4] * k, ws_prof[3] * k,
              (double)ws_dyn[0] / runs, (double)ws_dyn[1] / runs, (double)ws_dyn[2] / runs);
-    { extern unsigned long long ws_spu_stat[6]; extern int ws_spu_render_on; size_t l = strlen(b);
+    { extern unsigned long long ws_spu_stat[16]; extern int ws_spu_render_on; size_t l = strlen(b);
       snprintf(b + l, n - l, " | spur=%d jobs/run=%.1f prims/run=%.0f syncwaits/run=%.1f waitms/run=%.2f maxspu_ms=%.2f full=%llu", ws_spu_render_on,
                (double)ws_spu_stat[0] / (runs ? runs : 1), (double)ws_spu_stat[1] / (runs ? runs : 1), (double)ws_spu_stat[2] / (runs ? runs : 1),
                ws_spu_stat[3] * k, ws_spu_stat[4] / 79800.0 * 1.0 / 1.0, ws_spu_stat[5]);
+      l = strlen(b);
+      snprintf(b + l, n - l, " | spuwork ms/run (summed over SPUs): total %.2f miss-wait %.2f (n %.0f) band-io %.2f draw %.2f (prim-bands %.0f) list-io %.2f",
+               ws_spu_stat[6] / 79800.0 / (runs ? runs : 1), ws_spu_stat[7] / 79800.0 / (runs ? runs : 1), (double)ws_spu_stat[8] / (runs ? runs : 1),
+               ws_spu_stat[9] / 79800.0 / (runs ? runs : 1), ws_spu_stat[11] / 79800.0 / (runs ? runs : 1), (double)ws_spu_stat[10] / (runs ? runs : 1), ws_spu_stat[12] / 79800.0 / (runs ? runs : 1));
       memset(ws_spu_stat, 0, sizeof ws_spu_stat); }
+    { extern unsigned long long ws_gst[12]; size_t l = strlen(b); double r = runs ? runs : 1;
+      snprintf(b + l, n - l, " | cmd ms/run (n/run): poly %.2f (%.0f) spr %.2f (%.0f) line %.2f (%.0f) fill %.2f (%.0f) io %.2f (%.0f) syncwait %.2f (%.0f)",
+               ws_gst[0] * k, ws_gst[6] / r, ws_gst[1] * k, ws_gst[7] / r, ws_gst[2] * k, ws_gst[8] / r, ws_gst[3] * k, ws_gst[9] / r, ws_gst[4] * k, ws_gst[10] / r, ws_gst[5] * k, ws_gst[11] / r);
+      memset(ws_gst, 0, sizeof ws_gst); }
     memset(ws_dyn, 0, sizeof ws_dyn);
     memset(ws_prof, 0, sizeof ws_prof);
 }

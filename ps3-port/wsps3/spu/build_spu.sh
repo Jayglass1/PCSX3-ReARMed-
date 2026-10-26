@@ -3,7 +3,7 @@
 set -e
 cd /home/claude/w/wsps3/spu
 . ../FLAGS.sh
-spu-gcc -Os -Wall -w -fno-strict-aliasing -I$PSL1GHT/spu/include -c spu_gpu_main.c -o spu_gpu_main.o
+spu-gcc -O2 -finline-limit=40 -Wall -w -fno-strict-aliasing -I$PSL1GHT/spu/include -c spu_gpu_main.c -o spu_gpu_main.o
 spu-gcc -O3 spu_gpu_main.o -L$PSL1GHT/spu/lib -lsputhread -o spu_gpu.elf
 python3 - <<'P'
 d=open('spu_gpu.elf','rb').read()

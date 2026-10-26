@@ -688,6 +688,13 @@ static bool canDoTurbo(void)
 }
 
 
+int ws_cd_turbo = 1;
+/* Turbo CD: shorten seek/read/response delays unless audio (CDDA/XA) is streaming */
+static inline u32 cdTurbo(u32 c)
+{
+	return (ws_cd_turbo > 1 && !cdr.Play && !(cdr.Mode & MODE_STRSND)) ? c / ws_cd_turbo : c;
+}
+
 static int cdrSeekTime(unsigned char *target)
 {
 	int diff = msf2sec(cdr.SetSectorPlay) - msf2sec(target);
@@ -704,7 +711,7 @@ static int cdrSeekTime(unsigned char *target)
 	CDR_LOG("seek: %.2f %.2f (%.2f) st %d di %d\n", (float)seekTime / PSXCLK,
 		(float)seekTime / cdReadTime, (float)cyclesSinceRS / cdReadTime,
 		cdr.DriveState, diff);
-	return seekTime;
+	return cdTurbo(seekTime);
 }
 
 static u32 cdrAlignTimingHack(u32 cycles)
@@ -1060,7 +1067,7 @@ void cdrInterrupt(void) {
 				goto set_error;
 			}
 			cdr.DriveState = DRIVESTATE_STANDBY;
-			second_resp_time = cdReadTime * 125 / 2;
+			second_resp_time = cdTurbo(cdReadTime * 125 / 2);
 			start_rotating = 1;
 			break;
 
@@ -1086,7 +1093,7 @@ void cdrInterrupt(void) {
 
 			second_resp_time = 0x800;
 			if (cdr.DriveState != DRIVESTATE_STOPPED)
-				second_resp_time = cdReadTime * 30 / 2;
+				second_resp_time = cdTurbo(cdReadTime * 30 / 2);
 
 			cdr.DriveState = DRIVESTATE_STOPPED;
 			break;
@@ -1216,7 +1223,7 @@ void cdrInterrupt(void) {
 
 		case CdlReadT: // SetSession?
 			// really long
-			second_resp_time = cdReadTime * 290 / 4;
+			second_resp_time = cdTurbo(cdReadTime * 290 / 4);
 			start_rotating = 1;
 			break;
 
@@ -1270,7 +1277,7 @@ void cdrInterrupt(void) {
 			Rockman X5 = 0.5-4x
 			- fix capcom logo
 			*/
-            second_resp_time = cdReadTime + seekTime;
+            second_resp_time = cdTurbo(cdReadTime + seekTime);
 			start_rotating = 1;
 			break;
 
@@ -1365,7 +1372,7 @@ void cdrInterrupt(void) {
 		case CdlReadToc:
 		case CdlReadToc + CMD_WHILE_NOT_READY:
 			cdr.LocL[0] = LOCL_INVALID;
-			second_resp_time = cdReadTime * 180 / 4;
+			second_resp_time = cdTurbo(cdReadTime * 180 / 4);
 			start_rotating = 1;
 			break;
 
@@ -1418,7 +1425,7 @@ void cdrInterrupt(void) {
 				cycles = cdrAlignTimingHack(cycles);
 			else if (canDoTurbo())
 				cycles = cdReadTime / 2;
-			CDRPLAYREAD_INT(cycles, 1);
+			CDRPLAYREAD_INT(cdTurbo(cycles), 1);
 
 			SetPlaySeekRead(cdr.StatP, STATUS_SEEK);
 			start_rotating = 1;
@@ -1519,7 +1526,7 @@ static void cdrReadInterrupt(void)
 	*((u32*)cdr.SetSectorPlayBak) = *((u32*)subqPos);
 	if (cdr.SubqForwardSectors < SUBQ_FORWARD_SECTORS) {
 		cdr.SubqForwardSectors++;
-		CDRPLAYREAD_INT((cdr.Mode & MODE_SPEED) ? (cdReadTime / 2) : cdReadTime, 0);
+		CDRPLAYREAD_INT(cdTurbo((cdr.Mode & MODE_SPEED) ? (cdReadTime / 2) : cdReadTime), 0);
 		return;
 	}
 
@@ -1595,7 +1602,7 @@ static void cdrReadInterrupt(void)
 
 	msfiAdd(cdr.SetSectorPlay, 1);
 
-	CDRPLAYREAD_INT((cdr.Mode & MODE_SPEED) ? (cdReadTime / 2) : cdReadTime, 0);
+	CDRPLAYREAD_INT(cdTurbo((cdr.Mode & MODE_SPEED) ? (cdReadTime / 2) : cdReadTime), 0);
 }
 
 /*

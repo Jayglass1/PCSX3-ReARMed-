@@ -1,7 +1,8 @@
-void main(float3 pos : POSITION, float2 uv : TEXCOORD0, float2 tx : TEXCOORD1,
-          out float4 ePos : POSITION, out float2 oUv : TEXCOORD0, out float2 oTx : TEXCOORD1)
+void main(float3 pos : POSITION, float2 uv : TEXCOORD0, float2 tx : TEXCOORD1, float sp : TEXCOORD2,
+          out float4 ePos : POSITION, out float2 oUv : TEXCOORD0, out float2 oTx : TEXCOORD1, out float oSp : TEXCOORD2)
 {
     ePos = float4(pos, 1.0f);
     oUv = uv;
     oTx = tx;
+    oSp = sp;
 }

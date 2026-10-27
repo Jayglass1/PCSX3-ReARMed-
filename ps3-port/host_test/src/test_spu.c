@@ -14,7 +14,7 @@ spu_prim_t caplist[4096]; int ncap;
 void ws_spu_cap_add(const spu_prim_t *p) { if (ncap < 4096) caplist[ncap++] = *p; }
 void ws_spu_sync(void) {}
 extern int sr_oob;
-extern void host_render(const spu_prim_t *list, unsigned n, void *vram, unsigned nw);
+extern void host_render(const spu_prim_t *list, unsigned n, void *vram, void *dest, unsigned hi, unsigned nw);
 
 static uint32_t rs = 12345;
 static uint32_t rnd(void) { rs = rs * 1664525u + 1013904223u; return rs >> 8; }
@@ -27,6 +27,8 @@ int main(int argc, char **argv)
     static const char *names[] = {"F3","G3","FT3","GT3","F4","FT4","GT4","SPR","TILE"};
     int stat[9] = {0}, statbad[9] = {0};
     psxDst = NULL; dshift = 10;
+    int HI = getenv("HI") ? atoi(getenv("HI")) : 0;
+    unsigned short *AH = malloc(2048 * 1024 * 2), *BH = malloc(2048 * 1024 * 2), *CH = malloc(2048 * 1024 * 2); static int hchg, hcap, htot;
     for (it = 0; it < iters; it++) {
         int kind = getenv("KIND") ? atoi(getenv("KIND")) : rr(0, 8), i;
         short x[4], y[4], tx[4], ty[4];
@@ -59,6 +61,13 @@ int main(int argc, char **argv)
             PSXDisplay.DrawOffset.x = rr(-5, 5); PSXDisplay.DrawOffset.y = rr(-5, 5);
             GlobalTextTP = tp;
             if (kind == 8) { /* tile: pick clipped box the way the real routine does is done inside it */ }
+        }
+        if (HI && kind <= 6) {   /* draw at 2x into the shadow buffer, textures stay native */
+            for (i = 0; i < 4; i++) { x[i] *= 2; y[i] *= 2; }
+            drawX *= 2; drawY *= 2; drawW = drawW * 2 + 1; drawH = drawH * 2 + 1;
+            lx0 = x[0]; ly0 = y[0]; lx1 = x[1]; ly1 = y[1]; lx2 = x[2]; ly2 = y[2]; lx3 = x[3]; ly3 = y[3];
+            for (i = 0; i < 2048 * 1024; i++) AH[i] = BH[i] = CH[i] = (rnd() & 3) ? (rnd() & 0xffff) : 0;
+            psxDst = AH; dshift = 11; interlacedMode = 0;
         }
         /* capture */
         spu_cap = 1; ws_spu_render_on = (kind >= 7);
@@ -106,16 +115,19 @@ int main(int argc, char **argv)
             }
             ncap = nc;
         }
-        sr_oob = 0; host_render(caplist, ncap, B, getenv("NW") ? atoi(getenv("NW")) : 1 + rr(0, 4));
+        sr_oob = 0; if (HI && kind <= 6) { memcpy(BH, AH, 0); } host_render(caplist, ncap, HI && kind <= 6 ? A : B, HI && kind <= 6 ? BH : B, HI && kind <= 6, getenv("NW") ? atoi(getenv("NW")) : 1 + rr(0, 4));
         stat[kind]++; { static int ch[9], cp[9]; if (memcmp(A, V0, 1024*512*2)) ch[kind]++; if (ncap) cp[kind]++; if (it == iters-1) printf("changed %d/%d captured %d (kind %d)\n", ch[kind], stat[kind], cp[kind], kind); }
-        if (memcmp(A, B, 1024 * 512 * 2)) {
+        if (HI && kind <= 6) { htot++; if (ncap) hcap++; if (memcmp(AH, CH, 2048*1024*2)) hchg++; }
+        { int hz = HI && kind <= 6; unsigned short *CA = hz ? AH : A, *CB = hz ? BH : B; int NN = hz ? 2048 * 1024 : 1024 * 512, WW = hz ? 2048 : 1024;
+        if (memcmp(CA, CB, NN * 2)) {
             int firstbad = -1, cnt = 0;
-            for (i = 0; i < 1024 * 512; i++) if (A[i] != B[i]) { if (firstbad < 0) firstbad = i; cnt++; }
-            if (getenv("DBGIT") && atoi(getenv("DBGIT"))==it) { printf("kind=%d tp=%d clip=%ld,%ld,%ld,%ld verts:",kind,tp,drawX,drawY,drawW,drawH); for(i=0;i<4;i++)printf(" (%d,%d)",x[i],y[i]); printf(" col0=%06x V0=%04x\n",col[0],V0[firstbad]); int k; for(k=0;k<ncap;k++)printf("cap pk=%d nv=%d y0=%d y1=%d il=%d\n",caplist[k].pk,caplist[k].nv,caplist[k].y0,caplist[k].y1,caplist[k].il);} if (bad < 12)
-                printf("oob=%d MISMATCH it=%d kind=%s tp=%d semi=%d abr=%d mask=%d dith=%d il=%d diff=%d first=(%d,%d) ref=%04x spu=%04x ncap=%d\n", sr_oob, it, names[kind], tp, DrawSemiTrans, GlobalTextABR, bCheckMask, iDither, interlacedMode, cnt, firstbad % 1024, firstbad / 1024, A[firstbad], B[firstbad], ncap);
+            for (i = 0; i < NN; i++) if (CA[i] != CB[i]) { if (firstbad < 0) firstbad = i; cnt++; }
+            if (getenv("DBGIT") && atoi(getenv("DBGIT"))==it) { printf("kind=%d tp=%d clip=%ld,%ld,%ld,%ld verts:",kind,tp,drawX,drawY,drawW,drawH); for(i=0;i<4;i++)printf(" (%d,%d)",x[i],y[i]); printf(" col0=%06x V0=%04x\n",col[0],V0[firstbad % 1024]); int k; for(k=0;k<ncap;k++)printf("cap pk=%d nv=%d y0=%d y1=%d il=%d\n",caplist[k].pk,caplist[k].nv,caplist[k].y0,caplist[k].y1,caplist[k].il);} if (bad < 12)
+                printf("oob=%d MISMATCH it=%d kind=%s tp=%d semi=%d abr=%d mask=%d dith=%d il=%d diff=%d first=(%d,%d) ref=%04x spu=%04x ncap=%d\n", sr_oob, it, names[kind], tp, DrawSemiTrans, GlobalTextABR, bCheckMask, iDither, interlacedMode, cnt, firstbad % WW, firstbad / WW, CA[firstbad], CB[firstbad], ncap);
             bad++; statbad[kind]++;
         }
-    }
+    }}
+    if (HI) printf("hires: %d tests, %d captured, %d changed the buffer\n", htot, hcap, hchg);
     printf("done: %d iterations, %d mismatches\n", iters, bad);
     for (it = 0; it < 9; it++) printf("  %s: %d tests %d bad\n", names[it], stat[it], statbad[it]);
     return bad != 0;

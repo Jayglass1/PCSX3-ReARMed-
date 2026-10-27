@@ -3582,6 +3582,7 @@ static void DrawSoftwareSprite(short w,short h,int32_t tx,int32_t ty)
  bWT=FALSE;
  bWS=FALSE;
 
+ if(sprtW>=2 && spu_spr_fast(sprtX,sprtY,sprtW,sprtH,textX0,textY0)) return;
  switch (GlobalTextTP)
   {
    case 0:

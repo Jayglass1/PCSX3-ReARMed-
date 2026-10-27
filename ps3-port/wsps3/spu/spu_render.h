@@ -7,12 +7,11 @@
 #include <string.h>
 #include "spu_job.h"
 
-#define SR_BANDS      (512 / SPU_BAND_H)
-#define SR_BUFROWS    (SPU_BAND_H + 2)
+#define SR_BUFBYTES   40960                     /* native: (16+2) rows x 2 KB; 2x: (8+2) rows x 4 KB */
 #define SR_CLINES     512                       /* texture cache lines of 128 bytes = 64 KB */
 #define SR_CHUNK      64                        /* prims per list fetch */
 
-static unsigned char sr_band[SR_BUFROWS * SPU_VSTRIDE * 2 + 128] __attribute__((aligned(128)));
+static unsigned char sr_band[SR_BUFBYTES + 128] __attribute__((aligned(128)));
 static unsigned char sr_tc[SR_CLINES * 128] __attribute__((aligned(128)));
 static unsigned sr_tag[SR_CLINES];        /* line+1, 0 = empty */
 static spu_prim_t sr_list[SR_CHUNK] __attribute__((aligned(128)));
@@ -53,6 +52,14 @@ SR_AI unsigned char sr_texb(uint32_t off)
     off &= 0xfffff; line = off >> 7; s = sr_slot(line);
     if (sr_tag[s] != line + 1) sr_fill(s, line);
     return sr_tc[(s << 7) | (off & 127)];
+}
+/* pointer to texture byte `off` inside the cache (valid up to the end of its 128-byte line) */
+SR_AI const unsigned char *sr_texp(uint32_t off)
+{
+    unsigned line, sl;
+    off &= 0xfffff; line = off >> 7; sl = sr_slot(line);
+    if (sr_tag[sl] != line + 1) sr_fill(sl, line);
+    return sr_tc + ((sl << 7) | (off & 127));
 }
 #ifdef __SPU__
  #define SR_LE16(p) (__builtin_bswap16(*(const unsigned short *)(p)))
@@ -116,15 +123,17 @@ static void sr_put_big(void *ls, u64w ea, unsigned size)
 }
 
 /* draw `n` primitives (list at list_ea) into the bands assigned to `worker` of `nw` */
-static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, unsigned worker, unsigned nw)
+static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, u64w dest_ea, unsigned hi, unsigned worker, unsigned nw)
 {
     unsigned band, i, k;
+    const unsigned rowb = hi ? 4096 : 2048, bh = hi ? 8 : SPU_BAND_H, nrows = hi ? 1024 : 512, nbands = nrows / bh;
     sr_vram = vram_ea;
+    dshift = hi ? 11 : 10;
     memset(sr_p, 0, sizeof sr_p); memset(sr_kt, 0, sizeof sr_kt); memset(sr_kc, 0, sizeof sr_kc); memset(sr_kp, 0, sizeof sr_kp); memset(sr_ph, 0, sizeof sr_ph); memset(sr_ks, 0, sizeof sr_ks);
     memset(sr_tag, 0, sizeof sr_tag);
     sr_cbase = 0xffffffffu; sr_mvalid = 0;
-    for (band = worker; band < SR_BANDS; band += nw) {
-        int by0 = band * SPU_BAND_H, by1 = by0 + SPU_BAND_H, loaded = 0;
+    for (band = worker; band < nbands; band += nw) {
+        int by0 = band * bh, by1 = by0 + bh, loaded = 0;
         psxDst = (unsigned short *)sr_band - ((by0 - 1) << dshift);
         for (i = 0; i < n; i += SR_CHUNK) {
             unsigned m = n - i < SR_CHUNK ? n - i : SR_CHUNK;
@@ -138,8 +147,8 @@ static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, unsigned worker, u
                 if (!loaded) {
                     /* rows by0-1 .. by1 (guards included), clamped to VRAM */
                     unsigned t2 = SR_TICK();
-                    int r0 = by0 - 1 < 0 ? 0 : by0 - 1, r1 = by1 > 511 ? 511 : by1;
-                    sr_get_big(sr_band + (r0 - (by0 - 1)) * SPU_VSTRIDE * 2, vram_ea + (u64w)r0 * SPU_VSTRIDE * 2, (r1 - r0 + 1) * SPU_VSTRIDE * 2);
+                    int r0 = by0 - 1 < 0 ? 0 : by0 - 1, r1 = by1 > (int)nrows - 1 ? (int)nrows - 1 : by1;
+                    sr_get_big(sr_band + (r0 - (by0 - 1)) * rowb, dest_ea + (u64w)r0 * rowb, (r1 - r0 + 1) * rowb);
                     loaded = 1; sr_p[2] += t2 - SR_TICK();
                 }
                 SR_DBG(band, i + k, p->pk * 16 + p->nv * 4 + p->tp);
@@ -156,7 +165,7 @@ static void sr_render(u64w list_ea, unsigned n, u64w vram_ea, unsigned worker, u
             }
         }
         if (loaded) { unsigned t4 = SR_TICK();
-            sr_put_big(sr_band + SPU_VSTRIDE * 2, vram_ea + (u64w)by0 * SPU_VSTRIDE * 2, SPU_BAND_H * SPU_VSTRIDE * 2); sr_p[2] += t4 - SR_TICK(); }
+            sr_put_big(sr_band + rowb, dest_ea + (u64w)by0 * rowb, bh * rowb); sr_p[2] += t4 - SR_TICK(); }
     }
 }
 #endif

@@ -127,7 +127,8 @@ void ws_spu_selftest(void)
 #endif
 static spu_prim_t *plist[2];
 static int pcur, pn, pinflight;
-static void *spu_vram;
+static void *spu_vram, *spu_hvram;
+static int list_hi;          /* mode of the records in the current list: 0 native, 1 drawn at 2x */
 volatile int ws_spu_busy;        /* records pending or a job in flight */
 int ws_spu_render_on;            /* set by the menu */
 unsigned long long ws_gst[12]; /* per command class: ticks (0 poly,1 sprite/tile,2 line,3 fill,4 io/copy,5 sync) and counts (6..11) */
@@ -136,8 +137,10 @@ unsigned long long ws_spu_ph[8]; /* per kind: ticks 0..11, counts 12..23 (summed
 unsigned long long ws_spu_stat[16]; /* 0 jobs, 1 prims, 2 sync waits, 3 wait ticks, 4 max spu ticks, 5 flush-by-full */
 
 void ws_spu_set_vram(void *v) { spu_vram = v; }
+void ws_spu_set_hivram(void *v) { spu_hvram = v; }
 static int spu_dead, spu_warned;
 int ws_spu_render_ready(void) { return !spu_dead && nspu > 0 && plist[0] && spu_vram && ((uintptr_t)spu_vram & 15) == 0; }
+int ws_spu_hires_ready(void) { return ws_spu_render_ready() && spu_hvram && ((uintptr_t)spu_hvram & 15) == 0; }
 
 static void spu_alloc(void)
 {
@@ -204,11 +207,14 @@ static void spu_submit(void)
     spu_wait_inflight();
     ws_spu_begin();
     __sync_synchronize();
-    for (i = 0; i < nspu; i++)
+    for (i = 0; i < nspu; i++) {
+        sc[i].ea_c = list_hi ? ea_of(spu_hvram) : ea_of(spu_vram); sc[i].hi = list_hi;
         ws_spu_kick(i, SJ_RENDER, ea_of(plist[pcur]), pn, ea_of(spu_vram), nspu);
+    }
     ws_spu_stat[0]++; ws_spu_stat[1] += pn;
     pinflight = 1; pcur ^= 1; pn = 0;
 }
+void ws_spu_sync(void);
 unsigned long long ws_spu_cls[16];  /* FT: plain/semi, plain/opaque.. counters per prim */
 void ws_spu_cap_add(const spu_prim_t *p)
 {
@@ -220,6 +226,7 @@ void ws_spu_cap_add(const spu_prim_t *p)
         if (p->semi) ws_spu_cls[b + 5 + (p->abr & 3 ? 1 : 0)]++;
         if (p->il) ws_spu_cls[b + 7]++;
     }
+    if (p->hi != list_hi) { if (ws_spu_busy) ws_spu_sync(); list_hi = p->hi; }
     if (pn >= WS_LISTCAP) { ws_spu_stat[5]++; spu_submit(); }
     plist[pcur][pn++] = *p;
     ws_spu_busy = 1;

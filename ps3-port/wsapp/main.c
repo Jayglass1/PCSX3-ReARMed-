@@ -144,6 +144,7 @@ static void hw_init(void)
 #include <rsx/rsx_program.h>
 #include "fx/fx_vpo.h"
 #include "fx/fx_fpo.h"
+static int ws_sharp = 0;
 static int ws_fxaa = 3, fx_ok = 0;   /* 0 off, 1..4 = 2x 4x 8x 16x edge search reach */
 static const int fx_span[5] = { 0, 2, 4, 8, 16 };
 extern int ws_cd_turbo; static int cd_turbo_idx = 0; static const int cd_turbo_v[4] = { 1, 2, 4, 8 };
@@ -244,7 +245,6 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
     rsxSetWaitForIdle(ctx);
 }
 static int clear_pending;
-static int ws_sharp = 0;
 static int ws_analog = 1;
 static void hw_blit(const u32 *src, unsigned w, unsigned h, size_t pitch)
 {
@@ -265,7 +265,7 @@ static void hw_blit(const u32 *src, unsigned w, unsigned h, size_t pitch)
         }
         __asm__ volatile("sync" : : : "memory");
     }
-    if (ws_fxaa && !ws_sharp && fx_ok) {
+    if (ws_fxaa && fx_ok) {
         fx_run(src_off + (u32)((const u8 *)src - src_base), w, h, pitch, ox, oy, dw, dh);
         return;
     }
@@ -746,7 +746,7 @@ static void menu(void)
         draw_text(40, 148, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "Controller: %s   [L2] toggle   (DualShock: games enable the sticks themselves)", ws_analog ? "DualShock" : "Digital");
         draw_text(40, 174, line, 0x0080FF80, 2);
-        snprintf(line, sizeof line, "FXAA: %s   [R2] cycle   (anti-aliasing, Off/2x/4x/8x/16x edge reach; Smooth picture only)", ws_fxaa ? (ws_fxaa == 1 ? "2x" : ws_fxaa == 2 ? "4x" : ws_fxaa == 3 ? "8x" : "16x") : "Off");
+        snprintf(line, sizeof line, "FXAA: %s   [R2] cycle   (anti-aliasing, Off/2x/4x/8x/16x edge reach; smooths edges; Sharp mode is bypassed while FXAA is on)", ws_fxaa ? (ws_fxaa == 1 ? "2x" : ws_fxaa == 2 ? "4x" : ws_fxaa == 3 ? "8x" : "16x") : "Off");
         draw_text(40, 200, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "CPU clock: %d%%   [Left/Right] change   (below 100 = faster emulation, over 100 = fewer game slowdowns, slower)", ws_clock_pct);
         draw_text(40, 226, line, 0x0080FF80, 2);

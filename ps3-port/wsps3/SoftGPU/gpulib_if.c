@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 #include "../gpulib/gpu.h"
 #include "../compiler_features.h"
@@ -237,6 +238,11 @@ long           lLowerpart;
 unsigned short *psxDst;            // target of polygon span writes
 int             dshift = 10;       // log2(row stride of psxDst)
 static unsigned short *hiVuw;      // 2048x1024 2x copy of vram
+extern void ws_spu_sync(void);
+extern volatile int ws_spu_busy;
+extern int ws_spu_render_on;
+extern int ws_spu_hires_ready(void);
+extern void ws_spu_set_hivram(void *v);
 #define hiOn (gpu.state.enhancement_active)
 
 // pixel-double a native vram rect into the 2x buffer
@@ -244,6 +250,7 @@ static void hr_up(int x,int y,int w,int h)
 {
  int r,i;
  if(!hiVuw) return;
+ if(ws_spu_busy) ws_spu_sync();
  if(x<0){w+=x;x=0;}
  if(y<0){h+=y;y=0;}
  if(x+w>1024) w=1024-x;
@@ -301,6 +308,7 @@ static void hr_dirty_add(int x0,int y0,int x1,int y1)
 static void hr_down(int x0,int y0,int x1,int y1)
 {
  int r,i;
+ if(ws_spu_busy) ws_spu_sync();
  for(r=y0;r<y1;r++)
   {
    unsigned short *d=psxVuw+r*1024;
@@ -377,7 +385,8 @@ static void set_vram(void *vram)
 int renderer_init(void)
 {
  set_vram(gpu.vram);
- if(!hiVuw) hiVuw=(unsigned short *)calloc(2048*1024,2);
+ if(!hiVuw) { hiVuw=(unsigned short *)memalign(128,2048*1024*2); if(hiVuw) memset(hiVuw,0,2048*1024*2); }
+ ws_spu_set_hivram(hiVuw);
  gpu.get_enhancement_bufer = hiVuw ? hr_get_buf : NULL;
  psxDst=psxVuw; dshift=10;
 
@@ -426,7 +435,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 {
   int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
   if (!hiOn && hr_dirty) hr_sync_all();
-  if (hiOn) ws_spu_sync();
+  if (hiOn && !(ws_hires==2 && ws_spu_render_on && ws_spu_hires_ready())) ws_spu_sync();
   unsigned int cmd = 0, len;
   uint32_t *list_start = list;
   uint32_t *list_end = list + list_len;
@@ -443,7 +452,7 @@ int do_cmd_list(uint32_t *list, int list_len,
     }
 
     /* anything that touches VRAM other than the recorded polygons needs the SPU queue drained first */
-    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0x60) || (cmd >= 0x80 && cmd < 0xe0))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
+    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0x60) || (cmd >= 0x80 && cmd < 0xe0) || (hiOn && cmd >= 0x60 && cmd < 0x80))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
 #ifndef TEST
     if (0x80 <= cmd && cmd < 0xe0)
     {

@@ -57,7 +57,7 @@ static inline void spu_st32(void *p, uint32_t v) {
 #define __int64 long long
 static int g_il;
 #define checkInterlace(i) (g_il ? (((i) & 1) ^ (g_il - 1)) : 0)
-#define dshift 10
+static int dshift = 10;   /* log2 of the destination row stride in pixels: 10 native, 11 for the 2x buffer */
 
 #define XCOL1(x)     (x & 0x1f)
 #define XCOL2(x)     (x & 0x3e0)
@@ -94,7 +94,88 @@ static void sr_mod_build(void);
 #define TEXB_SRC(e) TEXB(YAdjust + (e))
 /* TEXB(byteOffset) / TEXW(wordIndex) come from the includer */
 
+static int spu_spr_fast(int sx, int sy, int sw, int sh, int tx0, int ty0);
 #include "spu_soft_gen.inc"
+
+/* Sprite rows for 4-bit / 8-bit CLUT textures: texels are streamed straight out of the texture cache one
+ * 128-byte line at a time (no per-texel cache lookup).
+ * mode 0: opaque 4-bit via the per-sprite colour table, 1: GetTextureTransColG_S (opaque, modulated). */
+#define SPR_EMIT(IDX) do { unsigned ix_ = (IDX); \
+    if (mode == 0) { uint32_t v_ = sr_modv[ix_]; if (v_) PUTLE16(d, v_); } \
+    else GetTextureTransColG_S(d, sr_clutv[ix_]); \
+    d++; } while (0)
+static inline __attribute__((always_inline)) void spr_rows(int sx, int sy, int sw, int sh, int tx0, int ty0, const int nib, const int mode)
+{
+    uint32_t base = ((uint32_t)GlobalTextAddrX << 1) + ((uint32_t)ty0 << 11);
+    int cy;
+    for (cy = 0; cy < sh; cy++) {
+        unsigned short *d;
+        uint32_t off;
+        int n = sw, hi = nib ? (tx0 & 1) : 0;
+        if (checkInterlace(sy + cy)) continue;
+        d = psxDst + ((sy + cy) << 10) + sx;
+        off = base + ((uint32_t)cy << 11) + (uint32_t)(nib ? (tx0 >> 1) : tx0);
+        while (n > 0) {
+            const unsigned char *p = sr_texp(off);
+            int avail = 128 - (int)(off & 127), m;
+            off += (uint32_t)avail;
+            if (nib) {
+                int cap = avail * 2 - hi;
+                m = n < cap ? n : cap; n -= m;
+                if (hi) { SPR_EMIT(p[0] >> 4); p++; m--; hi = 0; }
+                while (m >= 2) { unsigned b = *p++; SPR_EMIT(b & 15); SPR_EMIT(b >> 4); m -= 2; }
+                if (m) { SPR_EMIT(*p & 15); }
+            } else {
+                int k;
+                m = n < avail ? n : avail; n -= m;
+                for (k = 0; k < m; k++) SPR_EMIT(p[k]);
+            }
+        }
+    }
+}
+/* semi-transparent / mask-tested sprites: same pairing as DrawSoftwareSprite (paired GetTextureTransColG32_SPR) on a row copied out of the cache */
+static unsigned char spr_rowbuf[1088] __attribute__((aligned(16)));
+static void spr_rows_semi(int sx, int sy, int sw, int sh, int tx0, int ty0, const int nib)
+{
+    uint32_t base = ((uint32_t)GlobalTextAddrX << 1) + ((uint32_t)ty0 << 11);
+    int cy, hi = nib ? (tx0 & 1) : 0, nb = nib ? ((hi + sw + 1) >> 1) : sw;
+    for (cy = 0; cy < sh; cy++) {
+        unsigned short *d;
+        uint32_t off;
+        int got = 0, rem, k;
+        const unsigned char *p;
+        if (checkInterlace(sy + cy)) continue;
+        d = psxDst + ((sy + cy) << 10) + sx;
+        off = base + ((uint32_t)cy << 11) + (uint32_t)(nib ? (tx0 >> 1) : tx0);
+        while (got < nb) {
+            const unsigned char *q = sr_texp(off);
+            int avail = 128 - (int)(off & 127), m = nb - got < avail ? nb - got : avail;
+            memcpy(spr_rowbuf + got, q, m); got += m; off += (uint32_t)avail;
+        }
+        p = spr_rowbuf;
+        if (nib) {
+            if (hi) { GetTextureTransColG_SPR(d, sr_clutv[p[0] >> 4]); d++; p++; }
+            rem = sw - hi;
+            for (k = 0; k < (rem >> 1); k++, d += 2) { unsigned b = *p++; GetTextureTransColG32_SPR((uint32_t *)d, ((uint32_t)sr_clutv[b >> 4] << 16) | sr_clutv[b & 15]); }
+            if (rem & 1) GetTextureTransColG_SPR(d, sr_clutv[*p & 15]);
+        } else {
+            for (k = 0; k < (sw >> 1); k++, d += 2, p += 2) GetTextureTransColG32_SPR((uint32_t *)d, ((uint32_t)sr_clutv[p[1]] << 16) | sr_clutv[p[0]]);
+            if (sw & 1) GetTextureTransColG_SPR(d, sr_clutv[*p]);
+        }
+    }
+}
+static int spu_spr_fast(int sx, int sy, int sw, int sh, int tx0, int ty0)
+{
+    if (GlobalTextTP > 1 || sw > 1024) return 0;
+    if (GlobalTextTP == 0) {
+        if (!bCheckMask && !DrawSemiTrans) { sr_mod_build(); spr_rows(sx, sy, sw, sh, tx0, ty0, 1, 0); }
+        else spr_rows_semi(sx, sy, sw, sh, tx0, ty0, 1);
+    } else {
+        if (!bCheckMask && !DrawSemiTrans) spr_rows(sx, sy, sw, sh, tx0, ty0, 0, 1);
+        else spr_rows_semi(sx, sy, sw, sh, tx0, ty0, 0);
+    }
+    return 1;
+}
 
 
 /* tile: mirrors FillSoftwareAreaTrans() after its clipping (done on the PPU); only rows of this band are drawn */

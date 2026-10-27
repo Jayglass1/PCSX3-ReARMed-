@@ -114,6 +114,8 @@ spr = spr.replace(' unsigned char * pV;', ' uint32_t pV;')
 spr = re.sub(r'pV=&psxVub\[(.*)\];', r'pV=(\1);', spr)
 spr = re.sub(r'\*pV(\+\+)?', lambda m: 'TEXB(pV' + (m.group(1) or '') + ')', spr)
 spr = spr.replace('&psxVuw[sprA', '&psxDst[sprA')
+assert ' switch (GlobalTextTP)' in spr
+spr = spr.replace(' switch (GlobalTextTP)', ' if(sprtW>=2 && spu_spr_fast(sprtX,sprtY,sprtW,sprtH,textX0,textY0)) return;\n switch (GlobalTextTP)', 1)
 assert 'psxVub' not in spr
 out.append(spr)
 text = '\n\n'.join(out)

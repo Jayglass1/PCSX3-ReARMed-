@@ -2435,6 +2435,7 @@ static void spu_cap_poly(int nv,int pk,int tp,const short *x,const short *y,cons
  for(i=0;i<nv;i++){ p.x[i]=x[i]; p.y[i]=y[i]; if(y[i]<y0)y0=y[i]; if(y[i]>y1)y1=y[i]; if(tx){p.tx[i]=tx[i];p.ty[i]=ty[i];} p.col[i]=col[i]; }
  p.clx=clx; p.cly=cly; p.gm[0]=g_m1; p.gm[1]=g_m2; p.gm[2]=g_m3;
  if(dshift==10 && interlacedMode && PSXDisplay.Interlaced && !PSXDisplay.Disabled) p.il=1+(gInterlaceLine&1);
+ p.hi=(dshift==11);
  p.y0=y0<drawY?drawY:y0; p.y1=y1>drawH?drawH:y1;
  if(p.y1<p.y0) return;
  ws_spu_cap_add(&p);

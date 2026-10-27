@@ -32,7 +32,9 @@ typedef struct {
     short          gm[3];       /* g_m1..3 */
     short          y0, y1;      /* covered rows, for band culling */
     int            col[4];      /* colour words in call-argument order */
-    int            pad1[3];
+    unsigned char  hi;          /* 1 = drawn at 2x into the shadow buffer (rows 0..1023, stride 2048) */
+    unsigned char  pad2[3];
+    int            pad1[2];
 } spu_prim_t;
 
 #define SJ_QUIT  0xffffffffu
@@ -53,6 +55,9 @@ typedef struct {
     u32w kt[12], kc[12];  /* per primitive kind: ticks, prim-band count */
     u32w ph[8];
     u32w kp[12], ks[12];  /* per kind: bbox pixels in the band, rows stepped above the band */
+    u64w ea_c;            /* destination buffer of this job (VRAM, or the 2x shadow buffer when hi) */
+    u32w hi;              /* 1: draw into ea_c as a 2048x1024 buffer in 8-row bands; textures still come from ea_b */
+    u32w padc;
 } __attribute__((aligned(128))) spu_ctl_t;
 
 #endif

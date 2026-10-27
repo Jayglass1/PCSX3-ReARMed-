@@ -686,6 +686,16 @@ void ws_prof_str(char *b, int n, int runs)
       snprintf(b + l, n - l, " | spuwork ms/run (summed over SPUs): total %.2f miss-wait %.2f (n %.0f) band-io %.2f draw %.2f (prim-bands %.0f) list-io %.2f",
                ws_spu_stat[6] / 79800.0 / (runs ? runs : 1), ws_spu_stat[7] / 79800.0 / (runs ? runs : 1), (double)ws_spu_stat[8] / (runs ? runs : 1),
                ws_spu_stat[9] / 79800.0 / (runs ? runs : 1), ws_spu_stat[11] / 79800.0 / (runs ? runs : 1), (double)ws_spu_stat[10] / (runs ? runs : 1), ws_spu_stat[12] / 79800.0 / (runs ? runs : 1));
+      { extern unsigned long long ws_spu_kind[48]; static const char *kn[12] = {"F","G","FT4","FT8","FT15","GT4","GT8","GT15","SP4","SP8","SP15","TILE"}; int q;
+        l = strlen(b); snprintf(b + l, n - l, " | kinds ms/run@us-per-primband:");
+        for (q = 0; q < 12; q++) if (ws_spu_kind[12 + q]) { l = strlen(b); snprintf(b + l, n - l, " %s %.2f@%.1f[%.0fkpx %.0fkskip %.0fcyc/px]", kn[q], ws_spu_kind[q] / 79800.0 / (runs ? runs : 1), ws_spu_kind[q] / 79.8 / (double)ws_spu_kind[12 + q], ws_spu_kind[24 + q] / 1000.0 / (runs ? runs : 1), ws_spu_kind[36 + q] / 1000.0 / (runs ? runs : 1), ws_spu_kind[24 + q] ? ws_spu_kind[q] * 40.0 / (double)ws_spu_kind[24 + q] : 0.0); }
+        { extern unsigned long long ws_spu_cls[16]; double r_ = runs ? runs : 1; l = strlen(b);
+          snprintf(b + l, n - l, " | prims/run FT[plain-opaque %.0f modulated %.0f plain-semi %.0f mod-semi %.0f mask %.0f semi-abr0 %.0f semi-other %.0f interlaced %.0f] GT[plain-opaque %.0f modulated %.0f plain-semi %.0f mod-semi %.0f mask %.0f semi-abr0 %.0f semi-other %.0f interlaced %.0f]",
+                   ws_spu_cls[0] / r_, ws_spu_cls[1] / r_, ws_spu_cls[2] / r_, ws_spu_cls[3] / r_, ws_spu_cls[4] / r_, ws_spu_cls[5] / r_, ws_spu_cls[6] / r_, ws_spu_cls[7] / r_,
+                   ws_spu_cls[8] / r_, ws_spu_cls[9] / r_, ws_spu_cls[10] / r_, ws_spu_cls[11] / r_, ws_spu_cls[12] / r_, ws_spu_cls[13] / r_, ws_spu_cls[14] / r_, ws_spu_cls[15] / r_);
+          memset(ws_spu_cls, 0, sizeof ws_spu_cls); }
+        { extern unsigned long long ws_spu_ph[8]; l = strlen(b); snprintf(b + l, n - l, " | FT4quad phases ms/run (setup %.2f skip %.2f rowpro %.2f pixels %.2f rowend %.2f)", ws_spu_ph[0] / 79800.0 / (runs ? runs : 1), ws_spu_ph[1] / 79800.0 / (runs ? runs : 1), ws_spu_ph[2] / 79800.0 / (runs ? runs : 1), ws_spu_ph[3] / 79800.0 / (runs ? runs : 1), ws_spu_ph[4] / 79800.0 / (runs ? runs : 1)); memset(ws_spu_ph, 0, sizeof ws_spu_ph); }
+        memset(ws_spu_kind, 0, sizeof ws_spu_kind); }
       memset(ws_spu_stat, 0, sizeof ws_spu_stat); }
     { extern unsigned long long ws_gst[12]; size_t l = strlen(b); double r = runs ? runs : 1;
       snprintf(b + l, n - l, " | cmd ms/run (n/run): poly %.2f (%.0f) spr %.2f (%.0f) line %.2f (%.0f) fill %.2f (%.0f) io %.2f (%.0f) syncwait %.2f (%.0f)",

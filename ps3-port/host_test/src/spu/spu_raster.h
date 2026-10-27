@@ -17,9 +17,18 @@
 #endif
 
 
+typedef uint32_t __attribute__((may_alias)) u32a;
 /* 32-bit "two pixel" access built from halfwords so odd (2-byte aligned) addresses work on the SPU */
-static inline uint32_t spu_ld32(const void *p) { const unsigned short *h = (const unsigned short *)p; return (uint32_t)GETLE16(h) | ((uint32_t)GETLE16(h + 1) << 16); }
-static inline void spu_st32(void *p, uint32_t v) { unsigned short *h = (unsigned short *)p; PUTLE16(h, v & 0xffff); PUTLE16(h + 1, v >> 16); }
+static inline uint32_t spu_ld32(const void *p) {
+#ifdef __SPU__
+    if (!((uintptr_t)p & 3)) return __builtin_bswap32(*(const u32a *)p);   /* aligned: one load + one swap */
+#endif
+    const unsigned short *h = (const unsigned short *)p; return (uint32_t)GETLE16(h) | ((uint32_t)GETLE16(h + 1) << 16); }
+static inline void spu_st32(void *p, uint32_t v) {
+#ifdef __SPU__
+    if (!((uintptr_t)p & 3)) { *(u32a *)p = __builtin_bswap32(v); return; }
+#endif
+    unsigned short *h = (unsigned short *)p; PUTLE16(h, v & 0xffff); PUTLE16(h + 1, v >> 16); }
 #define GETLE32(p) spu_ld32(p)
 #define PUTLE32(p, v) spu_st32((p), (v))
 #define LOWORD(l)           ((unsigned short)(l))
@@ -65,18 +74,65 @@ static unsigned short *psxDst;          /* band buffer biased so psxDst[(y<<11)+
 static int32_t drawX, drawY, drawW, drawH;
 static short lx0, ly0, lx1, ly1, lx2, ly2, lx3, ly3;
 static short Ymin, Ymax;
-static short DrawSemiTrans;
-static BOOL bCheckMask;
-static unsigned short sSetMask;
+static int32_t DrawSemiTrans;
+static int32_t bCheckMask;
+static int32_t sSetMask;
 static uint32_t lSetMask;
 static int iDither;
 static int32_t GlobalTextAddrX, GlobalTextAddrY, GlobalTextABR;
-static short g_m1, g_m2, g_m3;
+static int32_t g_m1, g_m2, g_m3;
+static int32_t g_modtab;   /* 4-bit modulated textured polygon: sr_modv[] holds the final colour of every CLUT entry */
+extern uint32_t sr_modv[16];
+static int32_t g_plain;   /* no mask test and unmodulated colour (g_m == 128) */
+static int32_t GlobalTextTP;
+static uint32_t spr_gd2;
+static struct { struct { short x, y; } DrawOffset; } PSXDisplay;
 
+extern unsigned short sr_clutv[256];
+static void sr_clut_load(unsigned base, unsigned n);
+static void sr_mod_build(void);
 #define TEXB_SRC(e) TEXB(YAdjust + (e))
 /* TEXB(byteOffset) / TEXW(wordIndex) come from the includer */
 
 #include "spu_soft_gen.inc"
+
+
+/* tile: mirrors FillSoftwareAreaTrans() after its clipping (done on the PPU); only rows of this band are drawn */
+static void spu_fill_tile(const spu_prim_t *p, int by0, int by1)
+{
+    int x0 = p->x[0], y0 = p->y[0], x1 = p->x[1], y1 = p->y[1];
+    unsigned short col = (unsigned short)p->col[0];
+    int dx = x1 - x0, i, j, ya = y0 < by0 ? by0 : y0, yb = y1 > by1 ? by1 : y1;
+    if (!bCheckMask && !DrawSemiTrans) {   /* opaque: plain stores, pairs where aligned */
+        unsigned short v = (unsigned short)(col | sSetMask);
+        uint32_t pv = ((uint32_t)v << 16) | v;
+        for (i = ya; i < yb; i++) {
+            unsigned short *d; int n = dx;
+            if (checkInterlace(i)) continue;
+            d = psxDst + (i << dshift) + x0;
+            if (((uintptr_t)d & 2) && n) { PUTLE16(d, v); d++; n--; }
+            while (n >= 2) { spu_st32(d, pv); d += 2; n -= 2; }
+            if (n) PUTLE16(d, v);
+        }
+    } else if (dx & 1) {
+        for (i = ya; i < yb; i++) {
+            unsigned short *d;
+            if (checkInterlace(i)) continue;
+            d = psxDst + (i << dshift) + x0;
+            for (j = 0; j < dx; j++) GetShadeTransCol(d++, col);
+        }
+    } else {
+        uint32_t lcol = lSetMask | ((uint32_t)col << 16) | col;
+        int dw = dx >> 1;
+        for (i = ya; i < yb; i++) {
+            unsigned short *d;
+            if (checkInterlace(i)) continue;
+            d = psxDst + (i << dshift) + x0;
+            if (!bCheckMask && !DrawSemiTrans) for (j = 0; j < dx; j++) PUTLE16(d + j, (unsigned short)(col | sSetMask));
+            else for (j = 0; j < dw; j++, d += 2) GetShadeTransCol32((uint32_t *)d, lcol);
+        }
+    }
+}
 
 /* draw one polygon record into the current band; mirrors drawPoly{3,4}{F,G,FT,GT}() in soft.c */
 static void spu_draw_poly(const spu_prim_t *p, int by0, int by1)
@@ -89,11 +145,25 @@ static void spu_draw_poly(const spu_prim_t *p, int by0, int by1)
     sSetMask = p->setmask; lSetMask = ((uint32_t)p->setmask << 16) | p->setmask;
     GlobalTextAddrX = p->tpx; GlobalTextAddrY = p->tpy;
     g_m1 = p->gm[0]; g_m2 = p->gm[1]; g_m3 = p->gm[2];
+    g_plain = !bCheckMask && g_m1 == 128 && g_m2 == 128 && g_m3 == 128;
+    if (p->pk == 4) {
+        if (p->tp < 2) sr_clut_load((((unsigned)p->col[0] >> 22) & 511) * 1024 + (((unsigned)p->col[0] >> 12) & 0x3f0), p->tp == 0 ? 16 : 256);
+    } else if (p->pk >= 2 && p->pk != 5 && tp < 2) sr_clut_load((unsigned)p->cly * 1024 + (unsigned)p->clx, tp == 0 ? 16 : 256);
+    g_modtab = 0;
+    if (p->pk == 2 && tp == 0 && !p->semi && !p->mask) { sr_mod_build(); g_modtab = 1; }
     const short *x = p->x, *y = p->y, *tx = p->tx, *ty = p->ty;
     short clX = p->clx, clY = p->cly;
     const int *c = p->col;
     lx0 = x[0]; ly0 = y[0]; lx1 = x[1]; ly1 = y[1]; lx2 = x[2]; ly2 = y[2]; lx3 = x[3]; ly3 = y[3];
 
+    if (p->pk == 5) { spu_fill_tile(p, by0, by1); return; }
+    if (p->pk == 4) {
+        GlobalTextTP = tp; spr_gd2 = (uint32_t)c[0];
+        PSXDisplay.DrawOffset.x = x[1]; PSXDisplay.DrawOffset.y = y[1];
+        lx0 = x[0]; ly0 = y[0];
+        DrawSoftwareSprite((short)tx[1], (short)ty[1], tx[0], ty[0]);
+        return;
+    }
     if (p->nv == 3) {
         switch (p->pk) {
         case 0: drawPoly3Fi(x[0], y[0], x[1], y[1], x[2], y[2], c[0]); break;

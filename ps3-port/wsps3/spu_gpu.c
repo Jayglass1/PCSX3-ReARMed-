@@ -122,16 +122,21 @@ void ws_spu_selftest(void)
 /* ------------------------------------------------------------------ */
 /* SPU polygon renderer: the GPU thread records polygon primitives; the SPU workers draw them into VRAM */
 #define WS_LISTCAP 6144
+#ifndef WS_EARLY
+#define WS_EARLY 96
+#endif
 static spu_prim_t *plist[2];
 static int pcur, pn, pinflight;
 static void *spu_vram;
 volatile int ws_spu_busy;        /* records pending or a job in flight */
 int ws_spu_render_on;            /* set by the menu */
 unsigned long long ws_gst[12]; /* per command class: ticks (0 poly,1 sprite/tile,2 line,3 fill,4 io/copy,5 sync) and counts (6..11) */
+unsigned long long ws_spu_kind[48];
+unsigned long long ws_spu_ph[8]; /* per kind: ticks 0..11, counts 12..23 (summed over SPUs) */
 unsigned long long ws_spu_stat[16]; /* 0 jobs, 1 prims, 2 sync waits, 3 wait ticks, 4 max spu ticks, 5 flush-by-full */
 
 void ws_spu_set_vram(void *v) { spu_vram = v; }
-static int spu_dead;
+static int spu_dead, spu_warned;
 int ws_spu_render_ready(void) { return !spu_dead && nspu > 0 && plist[0] && spu_vram && ((uintptr_t)spu_vram & 15) == 0; }
 
 static void spu_alloc(void)
@@ -161,7 +166,9 @@ static void spu_wait_inflight(void)
     if (!spu_poll()) {
         t0 = tb(); ws_spu_stat[2]++;
         while (!spu_poll()) {
-            if (tb() - t0 > 79800000ULL * 5) {
+            if (tb() - t0 > 79800000ULL * 5 && spu_poll()) break;   /* we may just have been descheduled for a while */
+            if (tb() - t0 > 79800000ULL * (spu_warned ? 30 : 5)) {
+                if (!spu_warned) { spu_warned = 1; SysPrintf("spu: job slow (>5 s), still waiting\n"); continue; }
                 int w;
                 SysPrintf("spu: render job timeout (seq %u), disabling SPU renderer for good\n", (unsigned)spu_seq);
                 for (w = 0; w < nspu; w++) {
@@ -178,11 +185,14 @@ static void spu_wait_inflight(void)
             }
         }
         ws_spu_stat[3] += tb() - t0;
+        spu_warned = 0;
     }
     __sync_synchronize();
     for (i = 0; i < nspu; i++) {
         if (sc[i].res[0] > ws_spu_stat[4]) ws_spu_stat[4] = sc[i].res[0];
         ws_spu_stat[6] += sc[i].res[0]; ws_spu_stat[7] += sc[i].res[1]; ws_spu_stat[8] += sc[i].res[2]; ws_spu_stat[9] += sc[i].res[3];
+        { int q; for (q = 0; q < 5; q++) ws_spu_ph[q] += sc[i].ph[q]; }
+        { int q; for (q = 0; q < 12; q++) { ws_spu_kind[q] += sc[i].kt[q]; ws_spu_kind[12 + q] += sc[i].kc[q]; ws_spu_kind[24 + q] += sc[i].kp[q]; ws_spu_kind[36 + q] += sc[i].ks[q]; } }
         ws_spu_stat[10] += sc[i].res[4]; ws_spu_stat[11] += sc[i].res[5]; ws_spu_stat[12] += sc[i].res[6];
     }
     pinflight = 0;
@@ -199,12 +209,22 @@ static void spu_submit(void)
     ws_spu_stat[0]++; ws_spu_stat[1] += pn;
     pinflight = 1; pcur ^= 1; pn = 0;
 }
+unsigned long long ws_spu_cls[16];  /* FT: plain/semi, plain/opaque.. counters per prim */
 void ws_spu_cap_add(const spu_prim_t *p)
 {
     if (spu_dead) return;
+    if (p->pk == 2 || p->pk == 3) {
+        int b = (p->pk - 2) * 8, plain = p->gm[0] == 128 && p->gm[1] == 128 && p->gm[2] == 128;
+        if (p->mask) ws_spu_cls[b + 4]++;
+        else ws_spu_cls[b + (plain ? 0 : 1) + (p->semi ? 2 : 0)]++;
+        if (p->semi) ws_spu_cls[b + 5 + (p->abr & 3 ? 1 : 0)]++;
+        if (p->il) ws_spu_cls[b + 7]++;
+    }
     if (pn >= WS_LISTCAP) { ws_spu_stat[5]++; spu_submit(); }
     plist[pcur][pn++] = *p;
     ws_spu_busy = 1;
+    /* start drawing early so the SPUs work while the PPU keeps parsing/emulating */
+    if (pn >= WS_EARLY && (!pinflight || spu_poll())) spu_submit();
 }
 /* start drawing what has been recorded so far without waiting for it */
 void ws_spu_flush(void)

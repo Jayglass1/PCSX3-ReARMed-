@@ -1,5 +1,6 @@
 #include <spu_intrinsics.h>
 #include <spu_mfcio.h>
+#include <string.h>
 #include "spu_job.h"
 
 #define TAG 1
@@ -51,7 +52,7 @@ int main(unsigned long long ea, unsigned long long idx, unsigned long long a3, u
         if (ctl.cmd == SJ_QUIT) break;
         sr_dbg_ea = ea + 80; sr_dbgv[3] = 0;
         if (ctl.cmd == SJ_TEST) job_test();
-        else if (ctl.cmd == SJ_RENDER) { unsigned t0 = spu_readch(SPU_RdDec); sr_render(ctl.ea_a, ctl.n_a, ctl.ea_b, ctl.worker, ctl.n_b); ctl.res[0] = t0 - spu_readch(SPU_RdDec); ctl.res[1] = sr_p[0]; ctl.res[2] = sr_p[1]; ctl.res[3] = sr_p[2]; ctl.res[4] = sr_p[3]; ctl.res[5] = sr_p[4]; ctl.res[6] = sr_p[5]; }
+        else if (ctl.cmd == SJ_RENDER) { unsigned t0 = spu_readch(SPU_RdDec); sr_render(ctl.ea_a, ctl.n_a, ctl.ea_b, ctl.worker, ctl.n_b); ctl.res[0] = t0 - spu_readch(SPU_RdDec); ctl.res[1] = sr_p[0]; ctl.res[2] = sr_p[1]; ctl.res[3] = sr_p[2]; ctl.res[4] = sr_p[3]; ctl.res[5] = sr_p[4]; ctl.res[6] = sr_p[5]; memcpy(ctl.kt, sr_kt, sizeof ctl.kt); memcpy(ctl.kc, sr_kc, sizeof ctl.kc); memcpy(ctl.ph, sr_ph, sizeof sr_ph); memcpy(ctl.kp, sr_kp, sizeof ctl.kp); memcpy(ctl.ks, sr_ks, sizeof ctl.ks); }
         ctl.done = sig;
         mfc_put(&ctl, ea, sizeof ctl, TAG, 0, 0); wait_tag(TAG);
     }

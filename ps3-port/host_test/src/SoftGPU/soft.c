@@ -956,6 +956,8 @@ static inline void GetTextureTransColGX32_S(uint32_t * pdest,uint32_t color,shor
 // FILL FUNCS
 ////////////////////////////////////////////////////////////////////////
 
+extern int ws_spu_render_on;
+static void spu_cap_tile(short x0,short y0,short x1,short y1,unsigned short col);
 static void FillSoftwareAreaTrans(short x0,short y0,short x1, // FILL AREA TRANS
                       short y1,unsigned short col)
 {
@@ -989,6 +991,8 @@ static void FillSoftwareAreaTrans(short x0,short y0,short x1, // FILL AREA TRANS
    iCheat ^= 1;
   }
 
+
+ if(!hiOn && ws_spu_render_on){ spu_cap_tile(x0,y0,x1,y1,col); return; }
 
  if(dx&1)                                              // slow fill
   {
@@ -2415,6 +2419,10 @@ static inline BOOL SetupSections_GT4(short x1, short y1, short x2, short y2, sho
 static int spu_cap;
 extern void ws_spu_cap_add(const spu_prim_t *p);
 extern void ws_spu_sync(void);
+extern void ws_spu_flush(void);
+extern void ws_spu_set_vram(void *v);
+extern volatile int ws_spu_busy;
+extern int ws_spu_render_on;
 static void spu_cap_poly(int nv,int pk,int tp,const short *x,const short *y,const short *tx,const short *ty,short clx,short cly,const int *col)
 {
  spu_prim_t p; int i;
@@ -2429,6 +2437,46 @@ static void spu_cap_poly(int nv,int pk,int tp,const short *x,const short *y,cons
  if(dshift==10 && interlacedMode && PSXDisplay.Interlaced && !PSXDisplay.Disabled) p.il=1+(gInterlaceLine&1);
  p.y0=y0<drawY?drawY:y0; p.y1=y1>drawH?drawH:y1;
  if(p.y1<p.y0) return;
+ ws_spu_cap_add(&p);
+}
+static void spu_cap_il(spu_prim_t *p)
+{
+ if(dshift==10 && interlacedMode && PSXDisplay.Interlaced && !PSXDisplay.Disabled) p->il=1+(gInterlaceLine&1);
+}
+static void spu_cap_common(spu_prim_t *p)
+{
+ p->semi=DrawSemiTrans; p->mask=bCheckMask; p->abr=GlobalTextABR; p->dither=iDither;
+ p->setmask=sSetMask; p->tpx=GlobalTextAddrX; p->tpy=GlobalTextAddrY;
+ p->clip[0]=drawX; p->clip[1]=drawY; p->clip[2]=drawW; p->clip[3]=drawH;
+ p->gm[0]=g_m1; p->gm[1]=g_m2; p->gm[2]=g_m3;
+ spu_cap_il(p);
+}
+// pk 4: free sprite (x0/y0 = lx0/ly0 before DrawOffset, x1/y1 = DrawOffset, tx0/ty0 = texture origin, tx1/ty1 = w/h, col0 = clut word)
+static int spu_cap_sprite(int w,int h,int tx,int ty,uint32_t gd2)
+{
+ spu_prim_t p; int sy=ly0+PSXDisplay.DrawOffset.y, sx=lx0+PSXDisplay.DrawOffset.x, y0,y1;
+ if(sx>drawW || sy>drawH) return 1;
+ if(sx+w<drawX || sy+h<drawY) return 1;
+ memset(&p,0,sizeof p);
+ p.pk=4; p.nv=0; p.tp=GlobalTextTP;
+ spu_cap_common(&p);
+ p.x[0]=lx0; p.y[0]=ly0; p.x[1]=PSXDisplay.DrawOffset.x; p.y[1]=PSXDisplay.DrawOffset.y;
+ p.tx[0]=tx; p.ty[0]=ty; p.tx[1]=w; p.ty[1]=h; p.col[0]=(int)gd2;
+ y0=sy<drawY?drawY:sy; y1=sy+h>drawH?drawH:sy+h;
+ if(y1<y0) return 1;
+ p.y0=y0; p.y1=y1;
+ ws_spu_cap_add(&p);
+ return 1;
+}
+// pk 5: tile (already clipped box x0,y0,x1,y1 and colour)
+static void spu_cap_tile(short x0,short y0,short x1,short y1,unsigned short col)
+{
+ spu_prim_t p;
+ memset(&p,0,sizeof p);
+ p.pk=5; p.nv=0;
+ spu_cap_common(&p);
+ p.x[0]=x0; p.y[0]=y0; p.x[1]=x1; p.y[1]=y1; p.col[0]=col;
+ p.y0=y0; p.y1=y1;
  ws_spu_cap_add(&p);
 }
 ////////////////////////////////////////////////////////////////////////
@@ -6704,6 +6752,7 @@ static void drawPoly4GT(unsigned char *baseAddr)
 
 static void DrawSoftwareSpriteTWin(unsigned char * baseAddr,int32_t w,int32_t h)
 {
+ ws_spu_sync();
  uint32_t *gpuData = (uint32_t *)baseAddr;
  short sx0,sy0,sx1,sy1,sx2,sy2,sx3,sy3;
  short tx0,ty0,tx1,ty1,tx2,ty2,tx3,ty3;
@@ -6744,6 +6793,7 @@ static void DrawSoftwareSpriteTWin(unsigned char * baseAddr,int32_t w,int32_t h)
 
 static void DrawSoftwareSpriteMirror(unsigned char * baseAddr,int32_t w,int32_t h)
 {
+ ws_spu_sync();
  int32_t sprtY,sprtX,sprtW,sprtH,lXDir,lYDir;
  int32_t clutY0,clutX0,clutP,textX0,textY0,sprtYa,sprCY,sprCX,sprA;
  short tC;
@@ -6850,6 +6900,8 @@ static void DrawSoftwareSprite(unsigned char * baseAddr,short w,short h,int32_t 
  uint32_t *gpuData = (uint32_t *)baseAddr;
  unsigned char * pV;
  BOOL bWT,bWS;
+
+ if(!hiOn && ws_spu_render_on) { spu_cap_sprite(w,h,tx,ty,GETLE32(&((uint32_t *)baseAddr)[2])); return; }
 
  sprtY = ly0;
  sprtX = lx0;

@@ -443,7 +443,7 @@ int do_cmd_list(uint32_t *list, int list_len,
     }
 
     /* anything that touches VRAM other than the recorded polygons needs the SPU queue drained first */
-    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0xe0))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
+    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0x60) || (cmd >= 0x80 && cmd < 0xe0))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
 #ifndef TEST
     if (0x80 <= cmd && cmd < 0xe0)
     {

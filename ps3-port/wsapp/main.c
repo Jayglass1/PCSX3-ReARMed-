@@ -635,7 +635,7 @@ static int jit_state; /* 0 untested, 1 ok, -1 crashed previously */
 static void menu(void)
 {
     int sel = 0, top = 0;
-    char line[1100];
+    char line[2800];
     struct stat st;
     if (!stat(MARK, &st)) { jit_state = -1; unlink(MARK); }
     for (;;) {
@@ -707,7 +707,7 @@ static void menu(void)
                     snprintf(line, sizeof line, "run: %u runs, %u video frames, %ld s, last %ux%u px0=%08x", rf, vf,
                              (long)(time(NULL) - t0), lw, lh, lpx);
                     log_line(line);
-                    if (rf > 3) { char pb[1400]; ws_prof_str(pb, sizeof pb, 600);
+                    if (rf > 3) { char pb[2600]; ws_prof_str(pb, sizeof pb, 600);
                         snprintf(line, sizeof line, "%s | run=%.2fms present(total)=%.2fms/run", pb, tr_run / 600000.0, tr_pres / 600000.0);
                         log_line(line); tr_run = tr_pres = 0; }
                 }

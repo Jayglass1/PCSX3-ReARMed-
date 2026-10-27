@@ -5,7 +5,8 @@ The code is copied verbatim (so geometry and rounding stay identical); only thes
   - psxVub[x] / psxVuw[x] texture reads go through TEXB()/TEXW() (software-cached on the SPU)
 """
 import re, sys
-src = [l for l in open('../SoftGPU/soft.c').read().split('\n') if not l.startswith(' if(spu_cap)')]
+PROFPH = 0
+src = [l for l in open('../SoftGPU/soft.c').read().split('\n') if not l.startswith(' if(spu_cap)') and 'ws_spu_render_on' not in l]
 
 def find_func(name):
     pat = re.compile(r'^(static\s+)?(inline\s+)?[A-Za-z_][\w\s\*]*\b' + re.escape(name) + r'\s*\(')
@@ -70,7 +71,8 @@ def tex(text):
 
 parts = []
 funcs_color = ['Dither16', 'GetShadeTransCol_Dither', 'GetShadeTransCol', 'GetShadeTransCol32', 'GetTextureTransColG32',
-               'GetTextureTransColG', 'GetTextureTransColGX_Dither', 'GetTextureTransColGX', 'GetTextureTransColGX32_S', 'GetTextureTransColGX_S']
+               'GetTextureTransColG', 'GetTextureTransColGX_Dither', 'GetTextureTransColGX', 'GetTextureTransColGX32_S', 'GetTextureTransColGX_S',
+               'GetTextureTransColG_S', 'GetTextureTransColG_SPR', 'GetTextureTransColG32_S', 'GetTextureTransColG32_S_NM', 'GetTextureTransColG32_SPR']
 funcs_geom = ['shl10idiv']
 for pre in ['F', 'G', 'FT', 'GT', 'F4', 'FT4', 'GT4']:
     funcs_geom += ['RightSection_' + pre, 'LeftSection_' + pre, 'NextRow_' + pre, 'SetupSections_' + pre]
@@ -85,7 +87,35 @@ out.append('\n'.join(src[a:b+1]))
 for f in funcs_color + funcs_geom + funcs_poly:
     t = extract(f)
     if not (f.startswith('drawPoly') and 'TG' in f): t = drop_fastsolid(t)
+    if f == 'drawPoly4TEx4' and PROFPH:
+        t = t.replace('{\n', '{\n PH_RESET();\n', 1)
+        t = t.replace('tx3,ty3,tx4,ty4)) return;\n', 'tx3,ty3,tx4,ty4)) return;\n PH(0);\n', 1)
+        t = t.replace('  if(NextRow_FT4()) return;\n\n clutP', '  if(NextRow_FT4()) return;\n PH(1);\n\n clutP', 1)
+        t = t.replace('   xmin=(left_x >> 16);', '   PH(4);\n   xmin=(left_x >> 16);', 1)
+        t = t.replace('     for(j=xmin;j<xmax;j+=2)', '     PH(2);\n     for(j=xmin;j<xmax;j+=2)', 1)
+        i = t.rindex('   if(NextRow_FT4()) return;')
+        t = t[:i] + '   PH(3);\n' + t[i:]
+    if f == 'GetTextureTransColG32':
+        fast = (' if(g_plain && !(DrawSemiTrans && (color&0x80008000)))   /* unmodulated, no mask: result is the texel itself */\n'
+                '  {\n   uint32_t o=color|lSetMask;\n'
+                '   if((color&0xffff)==0    ) {PUTLE32(pdest, (GETLE32(pdest)&0xffff)|(o&0xffff0000));return;}\n'
+                '   if((color&0xffff0000)==0) {PUTLE32(pdest, (GETLE32(pdest)&0xffff0000)|(o&0xffff));return;}\n'
+                '   PUTLE32(pdest, o); return;\n  }\n')
+        assert ' if(color==0) return;\n' in t
+        t = t.replace(' if(color==0) return;\n', ' if(color==0) return;\n' + fast, 1)
     out.append(t)
+# sprite: verbatim DrawSoftwareSprite with destination redirected to the band buffer and the texture/clut reads cached
+spr = extract('DrawSoftwareSprite')
+spr = spr.replace('static void DrawSoftwareSprite(unsigned char * baseAddr,short w,short h,int32_t tx,int32_t ty)',
+                  'static void DrawSoftwareSprite(short w,short h,int32_t tx,int32_t ty)')
+spr = spr.replace(' uint32_t *gpuData = (uint32_t *)baseAddr;\n', '')
+spr = spr.replace('GETLE32(&gpuData[2])', 'spr_gd2')
+spr = spr.replace(' unsigned char * pV;', ' uint32_t pV;')
+spr = re.sub(r'pV=&psxVub\[(.*)\];', r'pV=(\1);', spr)
+spr = re.sub(r'\*pV(\+\+)?', lambda m: 'TEXB(pV' + (m.group(1) or '') + ')', spr)
+spr = spr.replace('&psxVuw[sprA', '&psxDst[sprA')
+assert 'psxVub' not in spr
+out.append(spr)
 text = '\n\n'.join(out)
 
 # texture reads
@@ -114,6 +144,43 @@ def conv_reads(text):
     text = bracket(text, 'psxVuw', 'TEXW_RAW')
     return text
 text = conv_reads(text)
+def conv_clut(text):
+    res = []; i = 0; key = 'TEXW(clutP+'
+    while True:
+        k = text.find(key, i)
+        if k < 0: res.append(text[i:]); break
+        res.append(text[i:k])
+        j = k + len(key); d = 1
+        while d:
+            c = text[j]
+            if c == '(': d += 1
+            elif c == ')': d -= 1
+            j += 1
+        res.append('sr_clutv[(' + text[k + len(key):j - 1] + ')]')
+        i = j
+    return ''.join(res)
+text = conv_clut(text)
+
+def patch_func(text, name, fn):
+    a = text.index('static void ' + name + '(')
+    b = text.find('\nstatic ', a + 10)
+    if b < 0: b = len(text)
+    return text[:a] + fn(text[a:b]) + text[b:]
+
+def modtab(t):
+    pat = re.compile(r'( *)GetTextureTransColG32\(\(uint32_t \*\)&psxDst\[\(i<<dshift\)\+j\],\s*sr_clutv\[\(tC1\)\]\|\s*\(\(int32_t\)sr_clutv\[\(tC2\)\]\)<<16\);')
+    m = pat.search(t); assert m, 'pair call not found'
+    orig = m.group(0).strip()
+    new = ('if(g_modtab) { uint32_t m1=sr_modv[tC1], m2=sr_modv[tC2]; unsigned short *pd=&psxDst[(i<<dshift)+j];\n'
+           '        if((m1&m2)&0x10000) PUTLE32(pd, (m1&0xffff)|(m2<<16)); else { if(m1) PUTLE16(pd,m1); else if(m2) PUTLE16(pd+1,m2); } }\n'
+           '       else ' + orig)
+    t = t[:m.start()] + m.group(1) + new + t[m.end():]
+    pat2 = re.compile(r'GetTextureTransColG\(&psxDst\[\(i<<dshift\)\+j\],sr_clutv\[\(tC1\)\]\);')
+    m = pat2.search(t); assert m, 'single call not found'
+    t = t[:m.start()] + 'if(g_modtab) { uint32_t m1=sr_modv[tC1]; if(m1) PUTLE16(&psxDst[(i<<dshift)+j],m1); } else ' + m.group(0) + t[m.end():]
+    return t
+text = patch_func(text, 'drawPoly3TEx4', modtab)
+text = patch_func(text, 'drawPoly4TEx4', modtab)
 open('spu_soft_gen.inc', 'w').write(text + '\n')
 print('wrote spu_soft_gen.inc', len(text), 'bytes')
 for bad in ['psxVuw', 'psxVub', 'FASTSOLID']:

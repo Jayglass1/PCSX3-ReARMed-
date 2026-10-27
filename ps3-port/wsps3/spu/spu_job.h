@@ -50,6 +50,9 @@ typedef struct {
     u32w padx[2];
     u32w dbg[4];       /* SPU progress breadcrumbs (16-byte aligned: offset 80) */
     u32w pad[8];
+    u32w kt[12], kc[12];  /* per primitive kind: ticks, prim-band count */
+    u32w ph[8];
+    u32w kp[12], ks[12];  /* per kind: bbox pixels in the band, rows stepped above the band */
 } __attribute__((aligned(128))) spu_ctl_t;
 
 #endif

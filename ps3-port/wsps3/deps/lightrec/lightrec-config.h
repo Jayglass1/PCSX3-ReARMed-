@@ -17,12 +17,12 @@
 #define OPT_REPLACE_MEMSET 1
 #define OPT_DETECT_IMPOSSIBLE_BRANCHES 1
 #define OPT_HANDLE_LOAD_DELAYS 1
-#define OPT_TRANSFORM_OPS 1
+#define OPT_TRANSFORM_OPS 0  /* host test (host_test/lr_test.c) found rare wrong results with this on */
 #define OPT_LOCAL_BRANCHES 1
 #define OPT_SWITCH_DELAY_SLOTS 1
 #define OPT_FLAG_IO 1
 #define OPT_FLAG_MULT_DIV 1
-#define OPT_EARLY_UNLOAD 1
+#define OPT_EARLY_UNLOAD 0  /* host test (host_test/lr_test.c) found wrong results with this on */
 #define OPT_PRELOAD_PC 1
 
 #define OPT_SH4_USE_GBR 0

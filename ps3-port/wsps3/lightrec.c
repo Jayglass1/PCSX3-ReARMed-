@@ -30,14 +30,14 @@
 #endif
 
 #define BUF_SIZE 0x400000 // 4 MiB code buffer for Lightrec and DYNAREC
-static s8* code_buffer = (s8*)LIGHTREC_BUF_LO;
+/* PS3: only the loaded image's .text is executable, so Lightrec shares the
+ * dynarec's code cache (ps3_jit_buffer). Only one CPU core is active per game. */
+static s8* code_buffer = (s8*)RECMEM2_LO;
 static struct lightrec_state *lightrec_state;
 
 static char *name = "sd:/WiiStation/WiiStation.elf";
 
-/* Unused for now */
-u32 event_cycles[PSXINT_COUNT];
-u32 next_interupt;
+/* event_cycles[] / next_interupt live in ps3_glue.c */
 
 static bool use_lightrec_interpreter = false;
 static bool use_pcsx_interpreter = false;
@@ -417,38 +417,21 @@ static const struct lightrec_ops lightrec_ops = {
 
 static int lightrec_plugin_init(void)
 {
-#if 0
 	lightrec_map[PSX_MAP_KERNEL_USER_RAM].address = psxM;
 	lightrec_map[PSX_MAP_BIOS].address = psxR;
 	lightrec_map[PSX_MAP_SCRATCH_PAD].address = psxH;
 	lightrec_map[PSX_MAP_HW_REGISTERS].address = psxH + 0x1000;
 	lightrec_map[PSX_MAP_PARALLEL_PORT].address = psxP;
 	lightrec_map[PSX_MAP_CODE_BUFFER].address = code_buffer;
-	/*
-	lightrec_map[PSX_MAP_MIRROR1].address = psxM + 0x200000;
-	lightrec_map[PSX_MAP_MIRROR2].address = psxM + 0x400000;
-	lightrec_map[PSX_MAP_MIRROR3].address = psxM + 0x600000;
-	*/
-#else
-	lightrec_map[PSX_MAP_KERNEL_USER_RAM].address = (void *)0x0;
-	lightrec_map[PSX_MAP_MIRROR1].address = (void *)0x200000;
-	lightrec_map[PSX_MAP_MIRROR2].address = (void *)0x400000;
-	lightrec_map[PSX_MAP_MIRROR3].address = (void *)0x600000;
-
-	lightrec_map[PSX_MAP_BIOS].address = (void *)0x1fc00000;
-	lightrec_map[PSX_MAP_SCRATCH_PAD].address = (void *)0x1f800000;
-	lightrec_map[PSX_MAP_HW_REGISTERS].address = (void *)0x1f801000;
-	lightrec_map[PSX_MAP_PARALLEL_PORT].address = psxP;
-	lightrec_map[PSX_MAP_CODE_BUFFER].address = code_buffer; // RECMEM2_LO;
-#endif
+	/* The RAM/parallel-port mirrors resolve through mirror_of; their .address stays
+	 * NULL so Lightrec masks addresses instead of assuming host-contiguous mirrors
+	 * (psxM+0x200000 is the parallel port here, not a RAM mirror). */
 
 	lightrec_state = lightrec_init(name,
 			lightrec_map, ARRAY_SIZE(lightrec_map),
 			&lightrec_ops);
 
 	lightrec_set_unsafe_opt_flags(lightrec_state, Config.hacks.lightrec_hacks);
-
-	signal(SIGPIPE, exit);
 
 	return 0;
 }
@@ -709,18 +692,3 @@ R3000Acpu psxLightrec =
 	lightrec_plugin_shutdown,
 };
 
-/* Implement the sysconf() symbol which is needed by GNU Lightning */
-long sysconf(int name)
-{
-	switch (name) {
-	case _SC_PAGE_SIZE:
-		return 4096;
-	default:
-		return -EINVAL;
-	}
-}
-
-mode_t umask(mode_t mask)
-{
-	return mask;
-}

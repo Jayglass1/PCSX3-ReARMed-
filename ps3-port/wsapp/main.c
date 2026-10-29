@@ -56,7 +56,9 @@ static volatile unsigned run_count; static volatile int in_game;
 #define MARK "/dev_hdd0/tmp/wiistation_jit_pending"
 
 static volatile int want_exit;
-static int use_dynarec;
+static int use_dynarec;   /* CPU core: 0 interpreter, 1 PPC dynarec, 2 Lightrec */
+#define LRMARK "/dev_hdd0/tmp/wiistation_lightrec.mark"
+static int lr_crashed;    /* previous Lightrec session did not exit cleanly */
 
 static void sysutil_cb(u64 st, u64 p, void *d)
 {
@@ -520,7 +522,7 @@ static bool env_cb(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         struct retro_variable *v = (struct retro_variable *)data;
-        if (!strcmp(v->key, "wiistation_cpu")) { v->value = use_dynarec ? "Dynarec" : "Interpreter"; return true; }
+        if (!strcmp(v->key, "wiistation_cpu")) { v->value = use_dynarec == 2 ? "Lightrec" : use_dynarec ? "Dynarec" : "Interpreter"; return true; }
         if (!strcmp(v->key, "wiistation_pad")) { v->value = ws_analog ? "Analog" : "Digital"; return true; }
         return false;
     }
@@ -638,6 +640,7 @@ static void menu(void)
     char line[2800];
     struct stat st;
     if (!stat(MARK, &st)) { jit_state = -1; unlink(MARK); }
+    if (!stat(LRMARK, &st)) { lr_crashed = 1; unlink(LRMARK); log_line("previous Lightrec session did not exit cleanly"); }
     for (;;) {
         sysUtilCheckCallback();
         if (want_exit) return;
@@ -649,7 +652,7 @@ static void menu(void)
         if (p & 128) sel = sel + 10 < ngames ? sel + 10 : (ngames ? ngames - 1 : 0);
         if (p & 8) {
             if (jit_state == -1) use_dynarec = 0;
-            else use_dynarec ^= 1;
+            else { use_dynarec = (use_dynarec + 1) % 3; if (use_dynarec == 2) lr_crashed = 0; }
         }
         if (p & 256) ws_fskip_auto ^= 1;
         if (p & 32) ws_sharp ^= 1;
@@ -662,6 +665,7 @@ static void menu(void)
         if ((p & 8192) && clk_idx < 6) clk_idx++;
         ws_cycle_mult = 17500 / ws_clock_pct;
         if (p & 4 && ngames) {
+            if (use_dynarec == 2) { FILE *lf = fopen(LRMARK, "w"); if (lf) fclose(lf); }
             if (use_dynarec && jit_state == 0) {
                 log_line("dynarec selected without test: running stage 3");
                 FILE *f = fopen(MARK, "w"); if (f) fclose(f);
@@ -674,7 +678,7 @@ static void menu(void)
             clear_screen(0); present();
             in_game = 1;
             if (!retro_load_game(&gi)) {
-                in_game = 0;
+                in_game = 0; unlink(LRMARK);
                 snprintf(line, sizeof line, "load failed: %s", games[sel]); log_line(line);
                 continue;
             }
@@ -727,6 +731,7 @@ static void menu(void)
             }
             in_game = 0;
             retro_unload_game();
+            unlink(LRMARK);
             prev_btn[0] = prev_btn[1] = ~0u;
             if (want_exit) return;
             continue;
@@ -735,8 +740,9 @@ static void menu(void)
         if (sel >= top + 11) top = sel - 10;
         clear_screen(0x00101830);
         draw_text(40, 20, "WiiStation PS3", 0x00FFFFFF, 3);
-        snprintf(line, sizeof line, "CPU: %s%s   [Triangle] toggle", use_dynarec ? "Dynarec (experimental)" : "Interpreter",
-                 jit_state == -1 ? "  (JIT crashed last time - disabled)" : "");
+        snprintf(line, sizeof line, "CPU: %s%s%s   [Triangle] change", use_dynarec == 2 ? "Lightrec (experimental)" : use_dynarec ? "Dynarec" : "Interpreter",
+                 jit_state == -1 ? "  (JIT crashed last time - disabled)" : "",
+                 (lr_crashed && use_dynarec != 2) ? "  (Lightrec did not exit cleanly last time)" : "");
         draw_text(40, 70, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "Frameskip: %s   [Square] toggle   (Auto: keeps full game speed in heavy 3D scenes)", ws_fskip_auto ? "Auto" : "Off");
         draw_text(40, 96, line, 0x0080FF80, 2);

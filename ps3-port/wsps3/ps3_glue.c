@@ -67,7 +67,7 @@ char fpsInfo[32];
 char txtbuffer[1024];
 PcsxConfig Config;
 PadDataS pad, lastport1, lastport2;
-R3000Acpu psxLightrec;       /* Lightrec is not part of this port */
+extern R3000Acpu psxLightrec;   /* lightrec.c */
 int lightrec_mmap(void *p, unsigned a, unsigned l) { return 0; }
 
 
@@ -566,8 +566,10 @@ static void update_variables(void)
 {
     struct retro_variable v = { "wiistation_cpu", NULL };
     dynacore = DYNACORE_INTERPRETER;
-    if (env_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &v) && v.value && v.value[0] == 'D')
-        dynacore = DYNACORE_DYNAREC_OLD;
+    if (env_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &v) && v.value) {
+        if (v.value[0] == 'D') dynacore = DYNACORE_DYNAREC_OLD;     /* PPC dynarec */
+        else if (v.value[0] == 'L') dynacore = DYNACORE_DYNAREC;    /* Lightrec */
+    }
     struct retro_variable p = { "wiistation_pad", NULL };
     padType[0] = 2; padType[1] = 0;
     pad_analog = env_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &p) && p.value && p.value[0] == 'A';
@@ -741,8 +743,6 @@ void retro_cheat_set(unsigned i, bool e, const char *c) { }
 u32 event_cycles[PSXINT_COUNT];
 u32 next_interupt;
 void execI(void *r) { }
-void irq_test(void *cp0) { }
-u32 schedule_timeslice(void) { return 0; }
 bool executingBios;
 long CDR__about(void) { return 0; }
 long CDR__configure(void) { return 0; }

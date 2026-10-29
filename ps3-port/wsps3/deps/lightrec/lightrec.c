@@ -1015,7 +1015,15 @@ static struct block * generate_wrapper(struct lightrec_state *state)
 	if (!block->function)
 		goto err_free_jit;
 
+#if LIGHTREC_AIXDESC
+	/* blocks are entered with jit_callr(), which expects a function descriptor */
+	state->c_wrapper_desc[0] = block->function;
+	state->c_wrapper_desc[1] = NULL;
+	state->c_wrapper_desc[2] = NULL;
+	state->c_wrapper = state->c_wrapper_desc;
+#else
 	state->c_wrapper = block->function;
+#endif
 
 	if (ENABLE_DISASSEMBLER) {
 		pr_debug("Wrapper block:\n");
@@ -1805,7 +1813,14 @@ static void lightrec_print_info(struct lightrec_state *state)
 
 u32 lightrec_execute(struct lightrec_state *state, u32 pc, u32 target_cycle)
 {
+#if LIGHTREC_AIXDESC
+	/* ELFv1 (PS3): a C function pointer must point at a descriptor {entry, TOC, env},
+	 * not at raw generated code. */
+	void *dispatcher_desc[3] = { (void *)state->dispatcher->function, NULL, NULL };
+	s32 (*func)(struct lightrec_state *, u32, void *, s32) = (void *)dispatcher_desc;
+#else
 	s32 (*func)(struct lightrec_state *, u32, void *, s32) = (void *)state->dispatcher->function;
+#endif
 	void *block_trace;
 	s32 cycles_delta;
 

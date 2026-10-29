@@ -17,5 +17,5 @@ make_self_npdrm build/ws_stripped.elf build/pkg/USRDIR/EBOOT.BIN $CID
 sfo --title "WiiStation PS3" --appid WSTN00001 -f $PS3DEV/bin/sfo.xml build/pkg/PARAM.SFO
 cp $PS3DEV/bin/ICON0.PNG build/pkg/ICON0.PNG
 pkg --contentid $CID build/pkg/ build/$1.pkg
-cp build/$1.pkg /tmp/claude-0/-home-claude/b960e41b-a814-593e-b81f-78a1cf827a7a/scratchpad/$1.pkg
+cp build/$1.pkg ${OUT:-/tmp}/$1.pkg
 ls -la build/$1.pkg

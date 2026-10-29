@@ -23,6 +23,14 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+/* 64-bit PowerPC ELFv1 / AIX style ABI (PS3): GNU Lightning's jit_callr() loads the
+ * target from a 3-word function descriptor, but the C-wrapper block is raw code. */
+#if defined(__powerpc64__) && !(defined(_CALL_ELF) && _CALL_ELF == 2)
+#define LIGHTREC_AIXDESC 1
+#else
+#define LIGHTREC_AIXDESC 0
+#endif
+
 #define X32_FMT "0x%08"PRIx32
 #define PC_FMT "PC "X32_FMT
 
@@ -178,6 +186,7 @@ struct lightrec_state {
 	u32 old_cycle_counter;
 	u32 cycles_per_op;
 	void *c_wrapper;
+	void *c_wrapper_desc[3];	/* ELFv1 (PS3): function descriptor {entry, TOC, env} for c_wrapper */
 	struct block *dispatcher, *c_wrapper_block;
 	void *c_wrappers[C_WRAPPERS_COUNT];
 	struct blockcache *block_cache;

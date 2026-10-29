@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: build_ws.sh <pkg name>
+# usage: build_ws.sh   (builds wsps3/libws.a; then run build_app.sh <pkg name>)
 set -e
 cd /home/claude/w/wsps3
 . ./FLAGS.sh
@@ -17,14 +17,4 @@ for f in $SRC; do
   ppu-gcc $CF -DUSE_LIBCHDR -I$I $x -c $f -o $o 2>>/home/claude/w/ws-build.err || { echo FAIL $f; exit 1; }
 done
 ppu-ar rcs libws.a obj/*.o
-cd /home/claude/w/RetroArch
-U=pkg/psl1ght/pkg/USRDIR
-cp /home/claude/w/wsps3/libws.a libretro_psl1ght.a
-rm -f retroarch_psl1ght.elf retroarch_psl1ght*.self retroarch_psl1ght.pkg $U/cores/*.SELF
-make -f Makefile.psl1ght -j2 retroarch_psl1ght.elf > /home/claude/w/ra-$1.log 2>&1
-python3 /home/claude/w/patch_rwx.py retroarch_psl1ght.elf
-make -f Makefile.psl1ght -j2 retroarch_psl1ght.self >> /home/claude/w/ra-$1.log 2>&1
-make -f Makefile.psl1ght create-core CORE_PATH=$U/cores/pcsx_rearmed_libretro.SELF >/dev/null 2>&1
-make -f Makefile.psl1ght.salamander pkg > /home/claude/w/ra-$1-pkg.log 2>&1
-cp retroarch_psl1ght.pkg /tmp/claude-0/-home-claude/b960e41b-a814-593e-b81f-78a1cf827a7a/scratchpad/$1.pkg
-ls -la /tmp/claude-0/-home-claude/b960e41b-a814-593e-b81f-78a1cf827a7a/scratchpad/$1.pkg
+ls -la libws.a

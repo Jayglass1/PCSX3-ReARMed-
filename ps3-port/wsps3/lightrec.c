@@ -528,6 +528,11 @@ static void lightrec_plugin_execute_internal(bool block_only)
 		cycles_pcsx = 0;
 
 	u32 cycles_lightrec = cycles_pcsx * 1024;
+	static unsigned ws_ncall;
+	extern void ws_lr_log(const char *fmt, ...);
+	int ws_trace = ws_ncall < 16 || (ws_ncall % 200000) == 0;
+	if (ws_trace) ws_lr_log("LR exec#%u pc=%08x cycle=%u next_int=%u cycles_lightrec=%u step=%d\n", ws_ncall, psxRegs.pc, psxRegs.cycle, next_interupt, cycles_lightrec, (int)block_only);
+	ws_ncall++;
 	if (unlikely(use_lightrec_interpreter)) {
 			psxRegs.pc = lightrec_run_interpreter(lightrec_state,
 							      psxRegs.pc,
@@ -540,6 +545,7 @@ static void lightrec_plugin_execute_internal(bool block_only)
 	lightrec_tansition_to_pcsx(lightrec_state);
 
 		flags = lightrec_exit_flags(lightrec_state);
+	if (ws_trace) ws_lr_log("LR exec#%u done pc=%08x cycle=%u flags=%x\n", ws_ncall - 1, psxRegs.pc, psxRegs.cycle, flags);
 
 	if (flags & LIGHTREC_EXIT_SEGFAULT) {
 		#ifdef SHOW_DEBUG

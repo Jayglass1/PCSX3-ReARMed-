@@ -734,12 +734,19 @@ static struct block * lightrec_get_block(struct lightrec_state *state, u32 pc)
 	return block;
 }
 
+#ifdef WS_PS3
+extern void ws_lr_log(const char *fmt, ...);
+#endif
 static void * get_next_block_func(struct lightrec_state *state, u32 pc)
 {
 	struct block *block;
 	bool should_recompile;
 	void *func;
 	int err;
+#ifdef WS_PS3
+	static unsigned ws_nb;
+	if (ws_nb++ < 12) ws_lr_log("LR get_next_block pc=%08x cyc=%u tgt=%u exit=%x\n", pc, state->current_cycle, state->target_cycle, state->exit_flags);
+#endif
 
 	do {
 		func = lut_read(state, lut_offset(pc));
@@ -814,6 +821,9 @@ static void * get_next_block_func(struct lightrec_state *state, u32 pc)
 	} while (state->exit_flags == LIGHTREC_EXIT_NORMAL
 		 && state->current_cycle < state->target_cycle);
 
+#ifdef WS_PS3
+	{ static unsigned ws_ne; if (ws_ne++ < 12) ws_lr_log("LR get_next_block done pc=%08x func=%p cyc=%u tgt=%u exit=%x\n", pc, func, state->current_cycle, state->target_cycle, state->exit_flags); }
+#endif
 	state->curr_pc = pc;
 	return func;
 }
@@ -935,6 +945,10 @@ static void * lightrec_emit_code(struct lightrec_state *state,
 	if (state->ops.code_inv)
 		state->ops.code_inv(code, new_code_size);
 
+#ifdef WS_PS3
+	{ extern void ws_lr_dump(const char *, const void *, unsigned);
+	  ws_lr_dump("emit", code, new_code_size); }
+#endif
 	return code;
 }
 

@@ -27,6 +27,7 @@
  * target from a 3-word function descriptor, but the C-wrapper block is raw code. */
 #if defined(__powerpc64__) && !(defined(_CALL_ELF) && _CALL_ELF == 2)
 #define LIGHTREC_AIXDESC 1
+#define LIGHTREC_DESC_SIZE (3 * sizeof(void *))
 #else
 #define LIGHTREC_AIXDESC 0
 #endif

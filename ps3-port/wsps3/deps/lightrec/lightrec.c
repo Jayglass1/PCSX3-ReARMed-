@@ -949,6 +949,19 @@ static void * lightrec_emit_code(struct lightrec_state *state,
 	{ extern void ws_lr_dump(const char *, const void *, unsigned);
 	  ws_lr_dump("emit", code, new_code_size); }
 #endif
+#if LIGHTREC_AIXDESC
+	/* On ELFv1 GNU Lightning starts every emitted buffer with a 3-word function
+	 * descriptor {entry, TOC, env}.  Lightrec jumps to block->function and stores it in
+	 * its LUT, so hand out the raw entry point (just behind the descriptor) instead;
+	 * lightrec_free_function() maps it back to the allocation. */
+	{
+		/* Lightning only emits the descriptor when the buffer does not start with a
+		 * frame-assuming prolog (the C wrapper has none), so check for it: {code + 24, 0, 0}. */
+		void **d = code;
+		if (d[0] == (void *)((char *)code + LIGHTREC_DESC_SIZE) && !d[1] && !d[2])
+			code = d[0];
+	}
+#endif
 	return code;
 }
 
@@ -1032,7 +1045,7 @@ static struct block * generate_wrapper(struct lightrec_state *state)
 #if LIGHTREC_AIXDESC
 	/* blocks are entered with jit_callr(), which expects a function descriptor */
 	state->c_wrapper_desc[0] = block->function;
-	state->c_wrapper_desc[1] = NULL;
+	state->c_wrapper_desc[1] = ((void **)(void *)lightrec_execute)[1];	/* our TOC */
 	state->c_wrapper_desc[2] = NULL;
 	state->c_wrapper = state->c_wrapper_desc;
 #else
@@ -1557,6 +1570,14 @@ static void lightrec_free_function(struct lightrec_state *state, void *fn)
 {
 	if (ENABLE_CODE_BUFFER && state->tlsf) {
 		pr_debug("Freeing code block at 0x%" PRIxPTR "\n", (uintptr_t) fn);
+#if LIGHTREC_AIXDESC
+		{
+			/* undo lightrec_emit_code(): the allocation starts at the descriptor, if any */
+			void **d = (void **)((char *)fn - LIGHTREC_DESC_SIZE);
+			if (d[0] == fn && !d[1] && !d[2])
+				fn = d;
+		}
+#endif
 		lightrec_free_code(state, fn);
 	}
 }
@@ -1830,7 +1851,8 @@ u32 lightrec_execute(struct lightrec_state *state, u32 pc, u32 target_cycle)
 #if LIGHTREC_AIXDESC
 	/* ELFv1 (PS3): a C function pointer must point at a descriptor {entry, TOC, env},
 	 * not at raw generated code. */
-	void *dispatcher_desc[3] = { (void *)state->dispatcher->function, NULL, NULL };
+	void *dispatcher_desc[3] = { (void *)state->dispatcher->function,
+				     ((void **)(void *)lightrec_execute)[1], NULL };
 	s32 (*func)(struct lightrec_state *, u32, void *, s32) = (void *)dispatcher_desc;
 #else
 	s32 (*func)(struct lightrec_state *, u32, void *, s32) = (void *)state->dispatcher->function;

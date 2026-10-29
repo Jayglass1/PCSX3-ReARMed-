@@ -1,0 +1,4 @@
+# build output
+ps3-port/wsapp/build/
+ps3-port/wsps3/obj/
+ps3-port/wsps3/libws.a

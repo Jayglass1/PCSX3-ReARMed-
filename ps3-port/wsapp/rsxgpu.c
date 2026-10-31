@@ -394,6 +394,9 @@ void ws_rsx_prim(const spu_prim_t *p)
     if (!rx_ok) return;
     RXW(108); RXT("prim pk=%d nv=%d tp=%d semi=%d\n", p->pk, p->nv, p->tp, p->semi);
     RXW(110); rx_cpu_sync_up(); RXW(111);
+    { static unsigned long n; static int ln; n++;
+      if (n > 30000 && ln < 150 && (p->pk >= 2 && p->pk <= 4) && (n % 7) == 0) { ln++;
+        ws_log("rsx-late: n=%lu pk=%d nv=%d tp=%d semi=%d abr=%d tpx=%d tpy=%d clx=%d cly=%d gm=%d,%d,%d col0=%x tx0=%d ty0=%d\n", n, p->pk, p->nv, p->tp, p->semi, p->abr, p->tpx, p->tpy, p->clx, p->cly, p->gm[0], p->gm[1], p->gm[2], (unsigned)p->col[0], (int)p->tx[0], (int)p->ty[0]); } }
     int textured = (p->pk == 2 || p->pk == 3 || p->pk == 4);
     float px[4], py[4], tu[4], tv[4];
     u8 col[4][4];

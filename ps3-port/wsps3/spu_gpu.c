@@ -216,8 +216,10 @@ static void spu_submit(void)
 }
 void ws_spu_sync(void);
 unsigned long long ws_spu_cls[16];  /* FT: plain/semi, plain/opaque.. counters per prim */
+extern int ws_rsx_on; extern void ws_rsx_prim(const spu_prim_t *p); extern void ws_rsx_readback(void);
 void ws_spu_cap_add(const spu_prim_t *p)
 {
+    if (ws_rsx_on) { ws_rsx_prim(p); return; }
     if (spu_dead) return;
     if (p->pk == 2 || p->pk == 3) {
         int b = (p->pk - 2) * 8, plain = p->gm[0] == 128 && p->gm[1] == 128 && p->gm[2] == 128;
@@ -241,6 +243,7 @@ void ws_spu_flush(void)
 /* make VRAM current: draw everything recorded and wait */
 void ws_spu_sync(void)
 {
+    if (ws_rsx_on) { if (ws_spu_busy) ws_rsx_readback(); return; }
     if (!ws_spu_busy) return;
     spu_submit();
     spu_wait_inflight();

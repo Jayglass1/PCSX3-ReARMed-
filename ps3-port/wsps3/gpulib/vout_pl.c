@@ -73,8 +73,23 @@ static void check_mode_change(int force)
 }
 
 extern void ws_spu_sync(void);
+extern int ws_rsx_on; extern void ws_rsx_present(int sx, int sy, int w, int h);
 void vout_update(void)
 {
+  if (ws_rsx_on && !(gpu.status & PSX_GPU_STATUS_RGB24) && !gpu.state.enhancement_active && !gpu.state.downscale_active) {
+    int rx_ = gpu.screen.src_x, ry_ = gpu.screen.src_y, rw_ = gpu.screen.w, rh_ = gpu.screen.h;
+    if (gpu.screen.x < 0) { rw_ += gpu.screen.x; rx_ -= gpu.screen.x; }
+    if (gpu.screen.y < 0) { rh_ += gpu.screen.y; ry_ -= gpu.screen.y; }
+    if (rx_ < 0) rx_ = 0; if (ry_ < 0) ry_ = 0;
+    if (rx_ + rw_ > 1024) rw_ = 1024 - rx_;
+    if (ry_ + rh_ > 512) rh_ = 512 - ry_;
+    if (rw_ > 0 && rh_ > 0) {
+      check_mode_change(0);
+      ws_rsx_present(rx_, ry_, rw_, rh_);
+      gpu.state.dims_changed = 0;
+    }
+    return;
+  }
   ws_spu_sync();
   int bpp = (gpu.status & PSX_GPU_STATUS_RGB24) ? 24 : 16;
   uint8_t *vram = (uint8_t *)gpu.vram;

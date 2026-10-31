@@ -179,8 +179,9 @@ static void fx_init(void)
     fx_ok = 1;
 }
 /* draws the source texture (main memory) into fbs[cur] with FXAA */
-static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
-                   unsigned ox, unsigned oy, unsigned dw, unsigned dh)
+static void fx_run_ex(int loc, u32 src_offset, unsigned w, unsigned h, size_t pitch,
+                      unsigned ox, unsigned oy, unsigned dw, unsigned dh,
+                      float u0, float v0, float u1, float v1)
 {
     gcmSurface sf; memset(&sf, 0, sizeof sf);
     sf.colorFormat = GCM_SURFACE_X8R8G8B8;
@@ -210,8 +211,8 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
     float tx = 1.0f / w, ty = 1.0f / h;
     float spn = (float)fx_span[ws_fxaa];
     float v[4][8] = {
-        { x0, y0, 0, 0, 0, tx, ty, spn }, { x1, y0, 0, 1, 0, tx, ty, spn },
-        { x1, y1, 0, 1, 1, tx, ty, spn }, { x0, y1, 0, 0, 1, tx, ty, spn } };
+        { x0, y0, 0, u0, v0, tx, ty, spn }, { x1, y0, 0, u1, v0, tx, ty, spn },
+        { x1, y1, 0, u1, v1, tx, ty, spn }, { x0, y1, 0, u0, v1, tx, ty, spn } };
     memcpy(fx_vb, v, sizeof v);
     __asm__ volatile("sync" : : : "memory");
 
@@ -227,7 +228,7 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
                (GCM_TEXTURE_REMAP_COLOR_G << GCM_TEXTURE_REMAP_COLOR_G_SHIFT) |
                (GCM_TEXTURE_REMAP_COLOR_R << GCM_TEXTURE_REMAP_COLOR_R_SHIFT) |
                (GCM_TEXTURE_REMAP_COLOR_A << GCM_TEXTURE_REMAP_COLOR_A_SHIFT));
-    t.width = w; t.height = h; t.depth = 1; t.location = GCM_LOCATION_CELL;
+    t.width = w; t.height = h; t.depth = 1; t.location = loc;
     t.pitch = pitch; t.offset = src_offset;
     u32 unit = fx_tex->index;
     rsxLoadTexture(ctx, unit, &t);
@@ -246,7 +247,14 @@ static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
     rsxDrawIndexArray(ctx, GCM_TYPE_TRIANGLES, fx_iboff, 6, GCM_INDEX_TYPE_16B, GCM_LOCATION_RSX);
     rsxSetWaitForIdle(ctx);
 }
+static void fx_run(u32 src_offset, unsigned w, unsigned h, size_t pitch,
+                   unsigned ox, unsigned oy, unsigned dw, unsigned dh)
+{
+    fx_run_ex(GCM_LOCATION_CELL, src_offset, w, h, pitch, ox, oy, dw, dh, 0.f, 0.f, 1.f, 1.f);
+}
 static int clear_pending;
+static int frame_have; static unsigned lw, lh, lpx;
+#include "rsxgpu.c"
 static int ws_analog = 1;
 static void hw_blit(const u32 *src, unsigned w, unsigned h, size_t pitch)
 {
@@ -531,7 +539,6 @@ static bool env_cb(unsigned cmd, void *data)
     }
 }
 
-static int frame_have; static unsigned lw, lh, lpx;
 static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch)
 {
     if (!data) return; /* dupe frame: keep previous contents */
@@ -615,7 +622,7 @@ static u32 btns(int p)
     u32 b = 0;
     padData *d = &pd[p];
     if (d->BTN_UP) b |= 1; if (d->BTN_DOWN) b |= 2; if (d->BTN_CROSS) b |= 4; if (d->BTN_TRIANGLE) b |= 8;
-    if (d->BTN_START) b |= 16; if (d->BTN_SELECT) b |= 32; if (d->BTN_L1) b |= 64; if (d->BTN_R1) b |= 128; if (d->BTN_SQUARE) b |= 256; if (d->BTN_CIRCLE) b |= 512; if (d->BTN_L2) b |= 1024; if (d->BTN_R2) b |= 2048; if (d->BTN_LEFT) b |= 4096; if (d->BTN_RIGHT) b |= 8192; if (d->BTN_L3) b |= 16384;
+    if (d->BTN_START) b |= 16; if (d->BTN_SELECT) b |= 32; if (d->BTN_L1) b |= 64; if (d->BTN_R1) b |= 128; if (d->BTN_SQUARE) b |= 256; if (d->BTN_CIRCLE) b |= 512; if (d->BTN_L2) b |= 1024; if (d->BTN_R2) b |= 2048; if (d->BTN_LEFT) b |= 4096; if (d->BTN_RIGHT) b |= 8192; if (d->BTN_L3) b |= 16384; if (d->BTN_R3) b |= 32768;
     return b;
 }
 static u32 pressed(void)
@@ -661,6 +668,7 @@ static void menu(void)
         if (p & 2048) ws_fxaa = (ws_fxaa + 1) % 5;
         if (p & 16384) { cd_turbo_idx = (cd_turbo_idx + 1) % 4; ws_cd_turbo = cd_turbo_v[cd_turbo_idx]; }
         if (p & 16) ws_spu_pref ^= 1;
+        if (p & 32768) ws_rsx_pref = (ws_rsx_pref + 1) % 5;
         if ((p & 4096) && clk_idx > 0) clk_idx--;
         if ((p & 8192) && clk_idx < 6) clk_idx++;
         ws_cycle_mult = 17500 / ws_clock_pct;
@@ -677,8 +685,11 @@ static void menu(void)
             struct retro_game_info gi = { games[sel], NULL, 0, NULL };
             clear_screen(0); present();
             in_game = 1;
+            int saved_hires = ws_hires; ws_rsx_on = 0;
+            if (ws_rsx_pref && fx_ok && rx_init(ws_rsx_pref)) { ws_rsx_on = 1; ws_hires = 0; ws_rsx_reset(); if (!rx_ok) ws_rsx_on = 0; }
+            if (!ws_rsx_on) ws_hires = saved_hires;
             if (!retro_load_game(&gi)) {
-                in_game = 0; unlink(LRMARK);
+                in_game = 0; unlink(LRMARK); ws_rsx_on = 0; ws_hires = saved_hires;
                 snprintf(line, sizeof line, "load failed: %s", games[sel]); log_line(line);
                 continue;
             }
@@ -692,7 +703,7 @@ static void menu(void)
                 u64 tr0 = sysGetSystemTime();
                 unsigned long long pg0 = ws_prof[0] + ws_prof[1], ps0 = ws_prof[2], pc0 = ws_prof[5], pe0 = ws_prof[3];
                 extern unsigned long long ws_chd_io, ws_hcx[4]; unsigned long long q_io = ws_chd_io, q_h0 = ws_hcx[0], q_h1 = ws_hcx[1], q_h2 = ws_hcx[2], q_h3 = ws_hcx[3];
-                ws_spu_render_on = ws_spu_pref && ws_spu_render_ready();
+                ws_spu_render_on = ws_rsx_on ? 1 : (ws_spu_pref && ws_spu_render_ready());
                 ws_where = 1; retro_run(); ws_where = 2;
                 u64 trd = sysGetSystemTime() - tr0;
                 tr_run += trd;
@@ -731,13 +742,14 @@ static void menu(void)
             }
             in_game = 0;
             retro_unload_game();
+            ws_rsx_on = 0; ws_hires = saved_hires; ws_spu_render_on = 0;
             unlink(LRMARK);
             prev_btn[0] = prev_btn[1] = ~0u;
             if (want_exit) return;
             continue;
         }
         if (sel < top) top = sel;
-        if (sel >= top + 11) top = sel - 10;
+        if (sel >= top + 10) top = sel - 9;
         clear_screen(0x00101830);
         draw_text(40, 20, "WiiStation PS3", 0x00FFFFFF, 3);
         snprintf(line, sizeof line, "CPU: %s%s%s   [Triangle] change", use_dynarec == 2 ? "Lightrec (experimental)" : use_dynarec ? "Dynarec" : "Interpreter",
@@ -760,15 +772,18 @@ static void menu(void)
         draw_text(40, 252, line, 0x0080FF80, 2);
         snprintf(line, sizeof line, "Turbo CD: %s   [L3] cycle   (faster disc loading; data reads only, music/video stay normal)", cd_turbo_v[cd_turbo_idx] == 1 ? "Off" : cd_turbo_idx == 1 ? "2x" : cd_turbo_idx == 2 ? "4x" : "8x");
         draw_text(40, 278, line, 0x0080FF80, 2);
+        snprintf(line, sizeof line, "GPU: %s   [R3] cycle   (RSX = experimental hardware renderer at 1x-4x internal resolution; replaces SPU renderer and 2x option)",
+                 ws_rsx_pref ? (ws_rsx_pref == 1 ? "RSX 1x" : ws_rsx_pref == 2 ? "RSX 2x" : ws_rsx_pref == 3 ? "RSX 3x" : "RSX 4x") : "Software");
+        draw_text(40, 304, line, 0x0080FF80, 2);
         if (!ngames) {
             draw_text(40, 170, "No games found. Put .cue/.bin, .chd, .iso or .pbp in:", 0x00FFFFFF, 2);
             draw_text(40, 230, BASE "/roms  or  /dev_hdd0/PSXISO", 0x00FFFF80, 2);
             draw_text(40, 260, "BIOS (optional): " BASE "/system/scph5501.bin", 0x00C0C0C0, 2);
         }
-        for (int i = top; i < ngames && i < top + 11; i++) {
+        for (int i = top; i < ngames && i < top + 10; i++) {
             const char *n = strrchr(games[i], '/'); n = n ? n + 1 : games[i];
-            draw_text(40, 316 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
-            if (i == sel) draw_text(16, 316 + (i - top) * 32, ">", 0x00FFFF00, 2);
+            draw_text(40, 342 + (i - top) * 32, n, i == sel ? 0x00FFFF00 : 0x00FFFFFF, 2);
+            if (i == sel) draw_text(16, 342 + (i - top) * 32, ">", 0x00FFFF00, 2);
         }
         draw_text(40, 110, stagemsg, 0x00FF8080, 2);
         draw_text(40, sh - 50, "X: start   Triangle: CPU mode   Select: picture   Circle: 2x   L2: pad   SELECT+START in game: back to list   PS button: quit", 0x00C0C0C0, 2);

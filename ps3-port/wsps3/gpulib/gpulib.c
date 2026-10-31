@@ -442,9 +442,10 @@ static inline void do_vram_line(int x, int y, uint16_t *mem, int l,
 }
 
 extern void ws_spu_sync(void);
+extern int ws_rsx_on; extern void ws_rsx_note_cpu(void);
 static int do_vram_io(uint32_t *data, int count, int is_read)
 {
-  ws_spu_sync();
+  if (ws_rsx_on && !is_read) ws_rsx_note_cpu(); else ws_spu_sync();
   int count_initial = count;
   uint32_t r6 = gpu.ex_regs[6] << 15;
   uint16_t *sdata = (uint16_t *)data;
@@ -454,7 +455,7 @@ static int do_vram_io(uint32_t *data, int count, int is_read)
   int l;
   count *= 2; // operate in 16bpp pixels
 
-  renderer_sync();
+  if (!(ws_rsx_on && !is_read)) renderer_sync();
 
   if (gpu.dma.offset) {
     l = w - gpu.dma.offset;

@@ -958,6 +958,8 @@ static inline void GetTextureTransColGX32_S(uint32_t * pdest,uint32_t color,shor
 
 extern int ws_spu_render_on;
 static void spu_cap_tile(short x0,short y0,short x1,short y1,unsigned short col);
+extern int ws_rsx_on;
+static void spu_cap_fill(short x0,short y0,short x1,short y1,unsigned short col);
 static void FillSoftwareAreaTrans(short x0,short y0,short x1, // FILL AREA TRANS
                       short y1,unsigned short col)
 {
@@ -1062,6 +1064,7 @@ static void FillSoftwareArea(short x0,short y0,short x1,      // FILL AREA (BLK 
  if(x1>1024)       x1=1024;
 
  dx=x1-x0;dy=y1-y0;
+ if(!hiOn && ws_rsx_on){ spu_cap_fill(x0,y0,x1,y1,col); return; }
  if(dx&1)
   {
    unsigned short *DSTPtr;
@@ -2476,6 +2479,17 @@ static void spu_cap_tile(short x0,short y0,short x1,short y1,unsigned short col)
  memset(&p,0,sizeof p);
  p.pk=5; p.nv=0;
  spu_cap_common(&p);
+ p.x[0]=x0; p.y[0]=y0; p.x[1]=x1; p.y[1]=y1; p.col[0]=col;
+ p.y0=y0; p.y1=y1;
+ ws_spu_cap_add(&p);
+}
+// block fill for the RSX renderer: opaque, ignores the draw area, mask bit clear
+static void spu_cap_fill(short x0,short y0,short x1,short y1,unsigned short col)
+{
+ spu_prim_t p;
+ memset(&p,0,sizeof p);
+ p.pk=5; p.nv=0;
+ p.clip[0]=0; p.clip[1]=0; p.clip[2]=1023; p.clip[3]=511;
  p.x[0]=x0; p.y[0]=y0; p.x[1]=x1; p.y[1]=y1; p.col[0]=col;
  p.y0=y0; p.y1=y1;
  ws_spu_cap_add(&p);

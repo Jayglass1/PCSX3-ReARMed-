@@ -23,3 +23,11 @@ The SPU polygon renderer (`wsps3/spu/`) is on by default (Start toggles it); fig
   start the menu notes that Lightrec did not exit cleanly.
 - `host_test/build_lr_test.sh` builds `lr_test` (x86): random MIPS programs, Lightrec JIT vs Lightrec interpreter.
   Run `CLS=15 ./lr_test 4000` (also `LR32=1` to put the code buffer below 4 GB like the PS3).
+
+## RSX hardware renderer (experimental)
+Menu "GPU" (R3) cycles Software / RSX 1x / 2x / 3x / 4x. The SoftGPU capture stream is replayed as triangles on the RSX
+(`wsapp/rsxgpu.c`, shaders in `wsapp/gp/`) into an N-times larger render target; the picture is scaled to the screen
+through the FXAA pass. The CPU keeps a 1x VRAM that is refreshed by readback whenever it must read VRAM.
+Limitations: no mask-bit test, no dither, no interlace line skipping; texture-window primitives and lines are drawn
+on the CPU at 1x (visible as low-res elements at 2x-4x). Disables the SPU renderer and the old 2x option while active.
+Log lines starting with `rsx:` go to /dev_hdd0/tmp/wiistation_app.log.

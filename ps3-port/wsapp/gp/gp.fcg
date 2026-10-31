@@ -1,0 +1,78 @@
+/* PS1 GPU primitive fragment program.
+   vram: the VRAM copy, A8R8G8B8, un-normalised coordinates, point sampled, N x native size.
+   pg = (page x, page y, clut x, clut y)   native VRAM pixels
+   md = (mode, tpass, N, flags)  mode 0 4bit 1 8bit 2 15bit 3 untextured; tpass 0 all texels, 1 opaque texels only, 2 semi texels only
+        flags: 1 = quarter colour (B+F/4), 2 = half alpha (B/2+F/2), 4 = set mask bit
+   tw = texture window (mask x, mask y, off x, off y) in 8 pixel units, all zero = none */
+
+float bitof(float v, float p) { return fmod(floor(v / p), 2.0f); }
+
+float winaxis(float t, float mask, float off)
+{
+    float blk = floor(t * 0.125f);
+    float inb = t - blk * 8.0f;
+    float nb = 0.0f;
+    nb += (bitof(mask, 1.0f)  > 0.5f ? bitof(off, 1.0f)  : bitof(blk, 1.0f))  * 1.0f;
+    nb += (bitof(mask, 2.0f)  > 0.5f ? bitof(off, 2.0f)  : bitof(blk, 2.0f))  * 2.0f;
+    nb += (bitof(mask, 4.0f)  > 0.5f ? bitof(off, 4.0f)  : bitof(blk, 4.0f))  * 4.0f;
+    nb += (bitof(mask, 8.0f)  > 0.5f ? bitof(off, 8.0f)  : bitof(blk, 8.0f))  * 8.0f;
+    nb += (bitof(mask, 16.0f) > 0.5f ? bitof(off, 16.0f) : bitof(blk, 16.0f)) * 16.0f;
+    return nb * 8.0f + inb;
+}
+
+/* 15 bit PS1 word out of a VRAM texel */
+float wordof(float4 c)
+{
+    float3 q = floor(floor(c.rgb * 255.0f + 0.5f) * 0.125f);
+    return q.r + q.g * 32.0f + q.b * 1024.0f + (c.a > 0.5f ? 32768.0f : 0.0f);
+}
+
+float4 main(float4 col : COLOR0, float2 uv : TEXCOORD0, float4 pg : TEXCOORD1,
+            float4 md : TEXCOORD2, float4 tw : TEXCOORD3, uniform sampler2D vram) : COLOR
+{
+    float mode = floor(md.x + 0.5f);
+    float tpass = floor(md.y + 0.5f);
+    float N = md.z;
+    float flags = floor(md.w + 0.5f);
+    float setmask = bitof(flags, 4.0f);
+    float3 rgb = col.rgb;
+    float stp = 0.0f;
+
+    if (mode < 2.5f) {
+        float2 t = floor(uv);
+        float2 fr = uv - t;
+        t = t - 256.0f * floor(t * (1.0f / 256.0f));
+        if (tw.x + tw.y > 0.5f) {
+            t.x = winaxis(t.x, tw.x, tw.z);
+            t.y = winaxis(t.y, tw.y, tw.w);
+        }
+        float4 c;
+        if (mode < 0.5f) {
+            float xb = floor(t.x * 0.25f);
+            float sh = t.x - xb * 4.0f;
+            float w = wordof(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N));
+            float idx = fmod(floor(w / exp2(sh * 4.0f)), 16.0f);
+            c = tex2D(vram, (float2(pg.z + idx, pg.w) + 0.5f) * N);
+        } else if (mode < 1.5f) {
+            float xb = floor(t.x * 0.5f);
+            float sh = t.x - xb * 2.0f;
+            float w = wordof(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N));
+            float idx = fmod(floor(w / exp2(sh * 8.0f)), 256.0f);
+            c = tex2D(vram, (float2(pg.z + idx, pg.w) + 0.5f) * N);
+        } else {
+            c = tex2D(vram, (float2(pg.x + t.x, pg.y + t.y) + fr) * N);
+        }
+        if (wordof(c) < 0.5f) discard;
+        stp = c.a > 0.5f ? 1.0f : 0.0f;
+        if (tpass > 1.5f) { if (stp < 0.5f) discard; }
+        else if (tpass > 0.5f) { if (stp > 0.5f) discard; }
+        rgb = min(c.rgb * col.rgb * (255.0f / 128.0f), 1.0f);
+    }
+
+    if (bitof(flags, 1.0f) > 0.5f) rgb = rgb * 0.25f;
+    /* back to 5 bit per channel, expanded to 8 */
+    float3 q5 = floor(floor(rgb * 255.0f + 0.5f) * 0.125f);
+    float3 o = (q5 * 8.0f + floor(q5 * 0.25f)) * (1.0f / 255.0f);
+    float a = (bitof(flags, 2.0f) > 0.5f) ? 0.5f : ((stp > 0.5f || setmask > 0.5f) ? 1.0f : 0.0f);
+    return float4(o, a);
+}

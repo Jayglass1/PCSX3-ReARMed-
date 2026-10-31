@@ -243,6 +243,7 @@ extern volatile int ws_spu_busy;
 extern int ws_spu_render_on;
 extern int ws_spu_hires_ready(void);
 extern void ws_spu_set_hivram(void *v);
+extern int ws_rsx_on;
 #define hiOn (gpu.state.enhancement_active)
 
 // pixel-double a native vram rect into the 2x buffer
@@ -452,7 +453,7 @@ int do_cmd_list(uint32_t *list, int list_len,
     }
 
     /* anything that touches VRAM other than the recorded polygons needs the SPU queue drained first */
-    if (ws_spu_busy && (cmd == 0x02 || (cmd >= 0x40 && cmd < 0x60) || (cmd >= 0x80 && cmd < 0xe0) || (hiOn && cmd >= 0x60 && cmd < 0x80))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
+    if (ws_spu_busy && ((cmd == 0x02 && !ws_rsx_on) || (cmd >= 0x40 && cmd < 0x60) || (cmd >= 0x80 && cmd < 0xe0 && !(ws_rsx_on && cmd >= 0xa0 && cmd < 0xc0)) || (hiOn && cmd >= 0x60 && cmd < 0x80))) { unsigned long long t_; __asm__ volatile("mftb %0" : "=r"(t_)); ws_spu_sync(); { unsigned long long e_; __asm__ volatile("mftb %0" : "=r"(e_)); ws_gst[5] += e_ - t_; ws_gst[11]++; } }
 #ifndef TEST
     if (0x80 <= cmd && cmd < 0xe0)
     {

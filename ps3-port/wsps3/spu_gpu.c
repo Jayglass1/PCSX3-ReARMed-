@@ -243,7 +243,7 @@ void ws_spu_flush(void)
 /* make VRAM current: draw everything recorded and wait */
 void ws_spu_sync(void)
 {
-    if (ws_rsx_on) { if (ws_spu_busy) ws_rsx_readback(); return; }
+    if (ws_rsx_on) { ws_rsx_readback(); return; }   /* always: callers are about to touch VRAM on the CPU, so it must be re-checked */
     if (!ws_spu_busy) return;
     spu_submit();
     spu_wait_inflight();

@@ -48,12 +48,16 @@ typedef struct { u8 blend, amask; short sx, sy, sw, sh; } rxst;
 static rxst rx_cur;
 
 extern void ws_log(const char *fmt, ...);
+static unsigned rx_tn;
+#define RXT(...) do { if (rx_tn < 80) { rx_tn++; ws_log("rsx-t: " __VA_ARGS__); } } while (0)
+#define RXW(k) (ws_where = (k))
 
 static void rx_dirty_clear(void) { rx_dx0 = rx_dy0 = 1 << 20; rx_dx1 = rx_dy1 = -1; }
 static void rx_cd_clear(void) { rx_cx0 = rx_cy0 = 1 << 20; rx_cx1 = rx_cy1 = -1; }
 
 static int rx_wait_gpu(void)
 {
+    RXW(101); RXT("wait_gpu\n");
     u64 t0 = sysGetSystemTime();
     rsxSetWriteBackendLabel(ctx, RX_LABEL, ++rx_label);
     rsxFlushBuffer(ctx);
@@ -100,7 +104,7 @@ static int rx_init(int n)
     rx_scale = n; rx_W = 1024 * n; rx_H = 512 * n; rx_pitch = rx_W * 4;
     rx_rt_p = rsxMemalign(128, rx_pitch * rx_H);
     rx_cp_p = rsxMemalign(128, rx_pitch * rx_H);
-    rx_z_p = rsxMemalign(128, rx_W * 2 * rx_H);
+    rx_z_p = rsxMemalign(128, rx_W * 4 * rx_H);   /* Z24S8: 16 bit depth with a 32 bit colour target is not a valid RSX combination */
     if (!rx_rt_p || !rx_cp_p || !rx_z_p) { rx_alloc_fail("render target"); return 0; }
     rsxAddressToOffset(rx_rt_p, &rx_rt_off); rsxAddressToOffset(rx_cp_p, &rx_cp_off); rsxAddressToOffset(rx_z_p, &rx_z_off);
     rx_rb_size = (u32)(rx_pitch * rx_H);                          /* whole target worst case: 1024N x 512N x 4 (32 MB at 4x) */
@@ -120,8 +124,8 @@ static void rx_bind_rt(void)
     sf.colorTarget = GCM_SURFACE_TARGET_0;
     sf.colorLocation[0] = GCM_LOCATION_RSX; sf.colorOffset[0] = rx_rt_off; sf.colorPitch[0] = rx_pitch;
     for (int i = 1; i < 4; i++) { sf.colorLocation[i] = GCM_LOCATION_RSX; sf.colorOffset[i] = 0; sf.colorPitch[i] = 64; }
-    sf.depthFormat = GCM_SURFACE_ZETA_Z16; sf.depthLocation = GCM_LOCATION_RSX;
-    sf.depthOffset = rx_z_off; sf.depthPitch = rx_W * 2;
+    sf.depthFormat = GCM_SURFACE_ZETA_Z24S8; sf.depthLocation = GCM_LOCATION_RSX;
+    sf.depthOffset = rx_z_off; sf.depthPitch = rx_W * 4;
     sf.type = GCM_SURFACE_TYPE_LINEAR; sf.antiAlias = GCM_SURFACE_CENTER_1;
     sf.width = rx_W; sf.height = rx_H; sf.x = 0; sf.y = 0;
     rsxSetSurface(ctx, &sf);
@@ -164,6 +168,7 @@ static void rx_bind_tex(void)
 static void rx_flush(void)
 {
     if (!rx_nv || !rx_ok) { rx_nv = 0; return; }
+    RXW(102); RXT("flush %u verts blend %d scissor %d,%d %dx%d\n", rx_nv, rx_cur.blend, rx_cur.sx, rx_cur.sy, rx_cur.sw, rx_cur.sh);
     rx_bind_rt();
     if (rx_texinval) { rsxSetWaitForIdle(ctx); rsxInvalidateTextureCache(ctx, GCM_INVALIDATE_TEXTURE); rx_bind_tex(); rx_texinval = 0; }
     rsxSetScissor(ctx, rx_cur.sx * rx_scale, rx_cur.sy * rx_scale, rx_cur.sw * rx_scale, rx_cur.sh * rx_scale);
@@ -190,14 +195,18 @@ static void rx_flush(void)
     rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX1,   0, base + 20, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
     rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX2,   0, base + 36, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
     rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX3,   0, base + 52, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    RXW(103); RXT("draw\n");
     rsxDrawVertexArray(ctx, GCM_TYPE_TRIANGLES, 0, rx_nv);
+    RXW(104);
     rx_vstart += rx_nv; rx_nv = 0; rx_nbatch++;
+    { static int dbg; if (dbg < 4) { dbg++; ws_log("rsx: first batch %d queued (blend %d)\n", dbg, rx_cur.blend); if (rx_wait_gpu()) ws_log("rsx: batch %d completed\n", dbg); } }
 }
 
 /* RT -> CP for the rectangle drawn since the last copy */
 static void rx_copy_dirty(void)
 {
     if (rx_cx1 <= rx_cx0 || !rx_ok) return;
+    RXW(105); RXT("copy_dirty\n");
     rx_flush();
     rsxSetWaitForIdle(ctx);
     rsxSetTransferImage(ctx, GCM_TRANSFER_LOCAL_TO_LOCAL, rx_cp_off, rx_pitch, rx_cx0 * rx_scale, rx_cy0 * rx_scale,
@@ -212,6 +221,7 @@ static void rx_copy_dirty(void)
 static void rx_upload(int x, int y, int w, int h)
 {
     if (!rx_ok || w <= 0 || h <= 0) return;
+    RXW(106); RXT("upload %d,%d %dx%d\n", x, y, w, h);
     rx_flush();
     rsxSetWaitForIdle(ctx);
     u32 pitch = ((u32)w * 4 + 63) & ~63u, bytes = pitch * h;
@@ -279,6 +289,7 @@ static void rx_cpu_sync_up(void)
 void ws_rsx_readback(void)
 {
     if (!ws_rsx_on || !rx_ok) { ws_spu_busy = 0; return; }
+    RXW(107); RXT("readback dirty %d,%d-%d,%d\n", rx_dx0, rx_dy0, rx_dx1, rx_dy1);
     rx_cpu_maybe = 1;
     if (rx_dx1 > rx_dx0 && rx_dy1 > rx_dy0) {
         int x0 = rx_dx0, y0 = rx_dy0, w = rx_dx1 - rx_dx0, h = rx_dy1 - rx_dy0;
@@ -348,6 +359,7 @@ static inline void rx_word_rgb(unsigned c, u8 *o)
 void ws_rsx_prim(const spu_prim_t *p)
 {
     if (!rx_ok) return;
+    RXW(108); RXT("prim pk=%d nv=%d tp=%d semi=%d\n", p->pk, p->nv, p->tp, p->semi);
     rx_cpu_sync_up();
     int textured = (p->pk == 2 || p->pk == 3 || p->pk == 4);
     float px[4], py[4], tu[4], tv[4];
@@ -477,6 +489,7 @@ static void fx_run_rt(int sx, int sy, int w, int h)
 void ws_rsx_present(int sx, int sy, int w, int h)
 {
     if (!rx_ok) return;
+    RXW(109); RXT("present %d,%d %dx%d\n", sx, sy, w, h);
     rx_cpu_sync_up();
     rx_flush();
     rsxSetWaitForIdle(ctx);

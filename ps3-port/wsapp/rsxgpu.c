@@ -296,7 +296,7 @@ static void rx_sync_band(int y0, int y1, int x0, int x1)
 }
 static void rx_cpu_sync_up(void)
 {
-    if (!rx_cpu_maybe || !rx_ok) return;
+    if (!rx_cpu_maybe || !rx_ok || !psxVuw) return;
     rx_cpu_maybe = 0;
     int y0 = -1, x0 = 1024, x1 = -1;
     const u64 *a = (const u64 *)psxVuw, *b = (const u64 *)rx_shadow;
@@ -320,7 +320,7 @@ static void rx_cpu_sync_up(void)
 /* CPU is about to read VRAM: bring the drawn area back to 1x */
 void ws_rsx_readback(void)
 {
-    if (!ws_rsx_on || !rx_ok) { ws_spu_busy = 0; return; }
+    if (!ws_rsx_on || !rx_ok || !psxVuw) { ws_spu_busy = 0; return; }   /* psxVuw is NULL until the GPU plugin has opened */
     RXW(107); RXT("readback dirty %d,%d-%d,%d\n", rx_dx0, rx_dy0, rx_dx1, rx_dy1);
     rx_cpu_sync_up();   /* CPU writes made since the last prim must reach the GPU before its data is read back over them */
     rx_cpu_maybe = 1;

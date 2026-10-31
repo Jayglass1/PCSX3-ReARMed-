@@ -41,7 +41,7 @@ float nibble(float4 f, float n)
 }
 float byt(float4 f, float n)
 {
-    return n < 0.5f ? f.r + 8.0f * md_(f.g, 4.0f) : floor(f.g * 0.25f) + 8.0f * f.b + 128.0f * f.a;
+    return n < 0.5f ? f.r + 32.0f * md_(f.g, 8.0f) : floor(f.g * 0.125f) + 4.0f * f.b + 128.0f * f.a;
 }
 
 float4 main(float4 col : COLOR0, float2 uv : TEXCOORD0, float4 pg : TEXCOORD1,

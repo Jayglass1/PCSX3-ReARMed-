@@ -101,6 +101,7 @@ static int rx_init(int n)
         if (!rx_shadow) { rx_alloc_fail("shadow"); return 0; }
         rx_inited = 1;
     }
+    rx_tn = 0;
     rx_scale = n; rx_W = 1024 * n; rx_H = 512 * n; rx_pitch = rx_W * 4;
     rx_rt_p = rsxMemalign(128, rx_pitch * rx_H);
     rx_cp_p = rsxMemalign(128, rx_pitch * rx_H);
@@ -203,6 +204,16 @@ static void rx_flush(void)
     { static int dbg; if (dbg < 4) { dbg++; ws_log("rsx: first batch %d queued (blend %d)\n", dbg, rx_cur.blend); if (rx_wait_gpu()) ws_log("rsx: batch %d completed\n", dbg); } }
 }
 
+/* 2D engine copies in tiles of at most 1024 x 512 (the largest size seen working; bigger single transfers hung the GPU at 2x) */
+static void rx_xfer(u8 mode, u32 dst, u32 dpitch, u32 dx, u32 dy, u32 src, u32 spitch, u32 sx, u32 sy, u32 w, u32 h, u32 bpp)
+{
+    for (u32 y0 = 0; y0 < h; y0 += 512)
+        for (u32 x0 = 0; x0 < w; x0 += 1024) {
+            u32 tw = w - x0 > 1024 ? 1024 : w - x0, th = h - y0 > 512 ? 512 : h - y0;
+            rsxSetTransferImage(ctx, mode, dst, dpitch, dx + x0, dy + y0, src, spitch, sx + x0, sy + y0, tw, th, bpp);
+        }
+}
+
 /* RT -> CP for the rectangle drawn since the last copy */
 static void rx_copy_dirty(void)
 {
@@ -210,7 +221,7 @@ static void rx_copy_dirty(void)
     RXW(105); RXT("copy_dirty\n");
     rx_flush();
     rsxSetWaitForIdle(ctx);
-    rsxSetTransferImage(ctx, GCM_TRANSFER_LOCAL_TO_LOCAL, rx_cp_off, rx_pitch, rx_cx0 * rx_scale, rx_cy0 * rx_scale,
+    rx_xfer( GCM_TRANSFER_LOCAL_TO_LOCAL, rx_cp_off, rx_pitch, rx_cx0 * rx_scale, rx_cy0 * rx_scale,
                         rx_rt_off, rx_pitch, rx_cx0 * rx_scale, rx_cy0 * rx_scale,
                         (rx_cx1 - rx_cx0) * rx_scale, (rx_cy1 - rx_cy0) * rx_scale, 4);
     rsxSetWaitForIdle(ctx);
@@ -222,6 +233,15 @@ static void rx_copy_dirty(void)
 static void rx_upload(int x, int y, int w, int h)
 {
     if (!rx_ok || w <= 0 || h <= 0) return;
+    {   /* scale engine output stays within 1024 x 512 per transfer */
+        int tw = 1024 / rx_scale, th = 512 / rx_scale;
+        if (w > tw || h > th) {
+            for (int j = 0; j < h; j += th)
+                for (int i = 0; i < w; i += tw)
+                    rx_upload(x + i, y + j, w - i > tw ? tw : w - i, h - j > th ? th : h - j);
+            return;
+        }
+    }
     RXW(106); RXT("upload %d,%d %dx%d\n", x, y, w, h);
     rx_flush();
     rsxSetWaitForIdle(ctx);
@@ -306,7 +326,7 @@ void ws_rsx_readback(void)
         rx_flush();
         rsxSetWaitForIdle(ctx);
         u32 rbp = ((u32)w * rx_scale * 4 + 63) & ~63u;
-        rsxSetTransferImage(ctx, GCM_TRANSFER_LOCAL_TO_MAIN, rx_rb_off, rbp, 0, 0, rx_rt_off, rx_pitch,
+        rx_xfer( GCM_TRANSFER_LOCAL_TO_MAIN, rx_rb_off, rbp, 0, 0, rx_rt_off, rx_pitch,
                             x0 * rx_scale, y0 * rx_scale, w * rx_scale, h * rx_scale, 4);
         if (rx_wait_gpu()) {
             int c = rx_scale / 2;
@@ -475,12 +495,15 @@ void ws_rsx_reset(void)
     rx_nv = 0; rx_vpos = 0; rx_vstart = 0; rx_up_pos = 0; rx_bound = 0; rx_texinval = 1;
     memset(rx_shadow, 0, 1024 * 512 * 2);
     rx_dirty_clear(); rx_cd_clear(); rx_cpu_maybe = 1;
+    RXT("reset: bind\n");
     rx_bind_rt();
+    RXT("reset: clear\n");
     rsxSetClearColor(ctx, 0);
     rsxSetScissor(ctx, 0, 0, rx_W, rx_H);
     rsxClearSurface(ctx, GCM_CLEAR_R | GCM_CLEAR_G | GCM_CLEAR_B | GCM_CLEAR_A);
     rsxSetWaitForIdle(ctx);
-    rsxSetTransferImage(ctx, GCM_TRANSFER_LOCAL_TO_LOCAL, rx_cp_off, rx_pitch, 0, 0, rx_rt_off, rx_pitch, 0, 0, rx_W, rx_H, 4);
+    RXT("reset: copy\n");
+    rx_xfer( GCM_TRANSFER_LOCAL_TO_LOCAL, rx_cp_off, rx_pitch, 0, 0, rx_rt_off, rx_pitch, 0, 0, rx_W, rx_H, 4);
     rsxSetWaitForIdle(ctx);
     rx_wait_gpu();
 }

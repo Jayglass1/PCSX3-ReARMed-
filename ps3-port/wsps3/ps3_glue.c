@@ -343,9 +343,15 @@ static unsigned char pad_do_cmd(void)
     default:   b[0] = 0xf3; return b[0];
     }
 }
+static unsigned char pad_rx[10]; static int pad_rxn, pad_logn;
 static unsigned char start_poll(int port)
 {
     int p = port - 1;
+    if (pad_rxn > 0 && pad_rx[0] != 0x42 && pad_logn < 80) {   /* what the game sent in the previous non-plain poll */
+        pad_logn++;
+        ws_log("padcmd %02x %02x %02x %02x %02x %02x %02x %02x\n", pad_rx[0], pad_rx[1], pad_rx[2], pad_rx[3], pad_rx[4], pad_rx[5], pad_rx[6], pad_rx[7]);
+    }
+    pad_rxn = 0; memset(pad_rx, 0, sizeof pad_rx);
     unsigned short s = read_pad(p, pad_ax[p]);
     pad_btn[p][0] = s & 0xff; pad_btn[p][1] = s >> 8;
     pad_cur = p; pad_curbyte = 0; pad_cmdlen = 0;
@@ -354,17 +360,18 @@ static unsigned char start_poll(int port)
 static unsigned char do_poll(unsigned char v)
 {
     unsigned char *b = pad_buf[pad_cur];
+    if (pad_curbyte < 8) { pad_rx[pad_curbyte] = v; pad_rxn = pad_curbyte + 1; }
     if (pad_curbyte == 0) {
         pad_curcmd = pad_analog ? v : 0x42;
         pad_curbyte = 1;
-        { static unsigned char seen[256]; if (!seen[v]) { seen[v] = 1; ws_log("pad: first cmd %02x (conf=%d mode=%d)", v, pad_conf[pad_cur], pad_mode[pad_cur]); } }
+        { static unsigned char seen[256]; if (!seen[v]) { seen[v] = 1; ws_log("pad: first cmd %02x (conf=%d mode=%d)\n", v, pad_conf[pad_cur], pad_mode[pad_cur]); } }
         return pad_do_cmd();
     }
     if (pad_curbyte >= pad_cmdlen) return 0xff;
     if (pad_curbyte == 2) {
         switch (pad_curcmd) {
-        case 0x43: if (pad_conf[pad_cur] != (v == 1)) ws_log("pad: config %d", v == 1); pad_conf[pad_cur] = (v == 1); break;
-        case 0x44: if (pad_mode[pad_cur] != (v == 1)) ws_log("pad: analog mode %d", v == 1); pad_mode[pad_cur] = (v == 1); break;
+        case 0x43: if (pad_conf[pad_cur] != (v == 1) && pad_logn < 80) ws_log("pad: config %d\n", v == 1); pad_conf[pad_cur] = (v == 1); break;
+        case 0x44: if (pad_mode[pad_cur] != (v == 1) && pad_logn < 80) ws_log("pad: analog mode %d\n", v == 1); pad_mode[pad_cur] = (v == 1); break;
         case 0x4c: b[5] = v ? 0x07 : 0x04; break;
         }
     }

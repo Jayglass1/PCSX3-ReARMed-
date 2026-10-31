@@ -232,7 +232,7 @@ static void rx_upload(int x, int y, int w, int h)
         const u16 *s = psxVuw + (y + j) * 1024 + x;
         u32 *d = (u32 *)((u8 *)dst + (size_t)j * pitch);
         for (int i = 0; i < w; i++) {
-            u32 c = s[i], r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+            u32 c = __builtin_bswap16(s[i]), r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
             d[i] = ((c & 0x8000) ? 0xff000000u : 0) | (((r << 3) | (r >> 2)) << 16) | (((g << 3) | (g >> 2)) << 8) | ((b << 3) | (b >> 2));
         }
         for (u8 *a = (u8 *)d; a < (u8 *)(d + w); a += 128) __asm__ volatile("dcbst 0,%0" : : "r"(a) : "memory");
@@ -308,7 +308,7 @@ void ws_rsx_readback(void)
                 u16 *d = psxVuw + (y0 + j) * 1024 + x0;
                 for (int i = 0; i < w; i++) {
                     u32 px = row[i * rx_scale + c];
-                    d[i] = (u16)(((px >> 19) & 31) | (((px >> 11) & 31) << 5) | (((px >> 3) & 31) << 10) | ((px >> 24) ? 0x8000 : 0));
+                    d[i] = __builtin_bswap16((u16)(((px >> 19) & 31) | (((px >> 11) & 31) << 5) | (((px >> 3) & 31) << 10) | ((px >> 24) ? 0x8000 : 0)));
                 }
                 memcpy(rx_shadow + (y0 + j) * 1024 + x0, d, (size_t)w * 2);
             }

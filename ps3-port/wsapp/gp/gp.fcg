@@ -20,11 +20,28 @@ float winaxis(float t, float mask, float off)
     return nb * 8.0f + inb;
 }
 
-/* 15 bit PS1 word out of a VRAM texel */
-float wordof(float4 c)
+float md_(float x, float m) { return x - floor(x / m) * m; }
+
+/* 5 bit channels (0..31) of a VRAM texel and its mask bit.  Only small integers are used below so even a
+   reduced precision pipeline stays exact (a 15 bit word is not exactly representable in fp16). */
+float4 fields(float4 c)
 {
     float3 q = floor(floor(c.rgb * 255.0f + 0.5f) * 0.125f);
-    return q.r + q.g * 32.0f + q.b * 1024.0f + (c.a > 0.5f ? 32768.0f : 0.0f);
+    return float4(q, c.a > 0.5f ? 1.0f : 0.0f);
+}
+
+/* nibble / byte n of the 16 bit word described by f */
+float nibble(float4 f, float n)
+{
+    float v0 = md_(f.r, 16.0f);
+    float v1 = floor(f.r * 0.0625f) + 2.0f * md_(f.g, 8.0f);
+    float v2 = floor(f.g * 0.125f) + 4.0f * md_(f.b, 4.0f);
+    float v3 = floor(f.b * 0.25f) + 8.0f * f.a;
+    return n < 0.5f ? v0 : (n < 1.5f ? v1 : (n < 2.5f ? v2 : v3));
+}
+float byt(float4 f, float n)
+{
+    return n < 0.5f ? f.r + 8.0f * md_(f.g, 4.0f) : floor(f.g * 0.25f) + 8.0f * f.b + 128.0f * f.a;
 }
 
 float4 main(float4 col : COLOR0, float2 uv : TEXCOORD0, float4 pg : TEXCOORD1,
@@ -50,19 +67,18 @@ float4 main(float4 col : COLOR0, float2 uv : TEXCOORD0, float4 pg : TEXCOORD1,
         if (mode < 0.5f) {
             float xb = floor(t.x * 0.25f);
             float sh = t.x - xb * 4.0f;
-            float w = wordof(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N));
-            float idx = fmod(floor(w / exp2(sh * 4.0f)), 16.0f);
+            float idx = nibble(fields(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N)), sh);
             c = tex2D(vram, (float2(pg.z + idx, pg.w) + 0.5f) * N);
         } else if (mode < 1.5f) {
             float xb = floor(t.x * 0.5f);
             float sh = t.x - xb * 2.0f;
-            float w = wordof(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N));
-            float idx = fmod(floor(w / exp2(sh * 8.0f)), 256.0f);
+            float idx = byt(fields(tex2D(vram, (float2(pg.x + xb, pg.y + t.y) + 0.5f) * N)), sh);
             c = tex2D(vram, (float2(pg.z + idx, pg.w) + 0.5f) * N);
         } else {
             c = tex2D(vram, (float2(pg.x + t.x, pg.y + t.y) + fr) * N);
         }
-        if (wordof(c) < 0.5f) discard;
+        float4 cf = fields(c);
+        if (cf.r + cf.g + cf.b + cf.a < 0.5f) discard;
         stp = c.a > 0.5f ? 1.0f : 0.0f;
         if (tpass > 1.5f) { if (stp < 0.5f) discard; }
         else if (tpass > 0.5f) { if (stp > 0.5f) discard; }

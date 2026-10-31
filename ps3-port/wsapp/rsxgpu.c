@@ -210,7 +210,10 @@ static void rx_xfer(u8 mode, u32 dst, u32 dpitch, u32 dx, u32 dy, u32 src, u32 s
     for (u32 y0 = 0; y0 < h; y0 += 512)
         for (u32 x0 = 0; x0 < w; x0 += 1024) {
             u32 tw = w - x0 > 1024 ? 1024 : w - x0, th = h - y0 > 512 ? 512 : h - y0;
-            rsxSetTransferImage(ctx, mode, dst, dpitch, dx + x0, dy + y0, src, spitch, sx + x0, sy + y0, tw, th, bpp);
+            if (mode == GCM_TRANSFER_LOCAL_TO_MAIN)   /* main memory destination: fold the tile origin into the offset */
+                rsxSetTransferImage(ctx, mode, dst + (dy + y0) * dpitch + (dx + x0) * bpp, dpitch, 0, 0, src, spitch, sx + x0, sy + y0, tw, th, bpp);
+            else
+                rsxSetTransferImage(ctx, mode, dst, dpitch, dx + x0, dy + y0, src, spitch, sx + x0, sy + y0, tw, th, bpp);
         }
 }
 

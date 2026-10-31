@@ -92,9 +92,9 @@ static int rx_init(int n)
         rsxProgramAttrib *a = rsxFragmentProgramGetAttrib(rx_fp, "vram");
         if (!a) { ws_log("rsx: no vram sampler in fragment program\n"); return 0; }
         rx_texunit = a->index;
-        rx_vb_p = rsxMemalign(128, RX_VBYTES);
-        if (!rx_vb_p) { rx_alloc_fail("vertex ring"); return 0; }
-        rsxAddressToOffset(rx_vb_p, &rx_vb_off);
+        /* vertex ring in cached main memory mapped for the RSX (PPU stores to RSX local memory are slow and fragile) */
+        rx_vb_p = memalign(1024 * 1024, RX_VBYTES);
+        if (!rx_vb_p || gcmMapMainMemory(rx_vb_p, RX_VBYTES, &rx_vb_off) != 0) { rx_alloc_fail("vertex ring"); return 0; }
         rx_up = (u8 *)memalign(1024 * 1024, RX_UP_SIZE);
         if (!rx_up || gcmMapMainMemory(rx_up, RX_UP_SIZE, &rx_up_off) != 0) { rx_alloc_fail("upload staging"); return 0; }
         rx_shadow = (u16 *)calloc(1024 * 512, 2);
@@ -188,13 +188,14 @@ static void rx_flush(void)
         rsxSetBlendEquation(ctx, GCM_FUNC_REVERSE_SUBTRACT, GCM_FUNC_ADD); break;
     }
     u32 base = rx_vb_off + rx_vstart * RX_STRIDE;
+    for (const u8 *a = (const u8 *)rx_vb_p + (size_t)rx_vstart * RX_STRIDE, *e = a + (size_t)rx_nv * RX_STRIDE; a < e; a += 128) __asm__ volatile("dcbst 0,%0" : : "r"(a) : "memory");
     __asm__ volatile("sync" : : : "memory");
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_POS,    0, base +  0, RX_STRIDE, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_COLOR0, 0, base +  8, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_U8,  GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX0,   0, base + 12, RX_STRIDE, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX1,   0, base + 20, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX2,   0, base + 36, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
-    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX3,   0, base + 52, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_RSX);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_POS,    0, base +  0, RX_STRIDE, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_COLOR0, 0, base +  8, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_U8,  GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX0,   0, base + 12, RX_STRIDE, 2, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX1,   0, base + 20, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX2,   0, base + 36, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, GCM_VERTEX_ATTRIB_TEX3,   0, base + 52, RX_STRIDE, 4, GCM_VERTEX_DATA_TYPE_F32, GCM_LOCATION_CELL);
     RXW(103); RXT("draw\n");
     rsxDrawVertexArray(ctx, GCM_TYPE_TRIANGLES, 0, rx_nv);
     RXW(104);
@@ -360,7 +361,7 @@ void ws_rsx_prim(const spu_prim_t *p)
 {
     if (!rx_ok) return;
     RXW(108); RXT("prim pk=%d nv=%d tp=%d semi=%d\n", p->pk, p->nv, p->tp, p->semi);
-    rx_cpu_sync_up();
+    RXW(110); rx_cpu_sync_up(); RXW(111);
     int textured = (p->pk == 2 || p->pk == 3 || p->pk == 4);
     float px[4], py[4], tu[4], tv[4];
     u8 col[4][4];
@@ -440,7 +441,7 @@ void ws_rsx_prim(const spu_prim_t *p)
         float md[4] = { textured ? (float)(tp > 2 ? 2 : tp) : 3.f, tpass, (float)rx_scale, flags };
         rx_setstate(blend, amask, cx0, cy0, cx1 - cx0 + 1, cy1 - cy0 + 1);
         unsigned nvert = nv == 4 ? 6 : 3;
-        rxv *v = rx_room(nvert);
+        RXW(112); rxv *v = rx_room(nvert); RXW(113);
         if (!v) return;
         if (nv == 4) {
             static const int ix[6] = { 0, 1, 2, 1, 3, 2 };
@@ -449,7 +450,7 @@ void ws_rsx_prim(const spu_prim_t *p)
             for (i = 0; i < 3; i++) rx_vert(&v[i], px[i], py[i], col[i], tu[i], tv[i], pg, md);
         }
     }
-    rx_union(&rx_dx0, &rx_dy0, &rx_dx1, &rx_dy1, bx0, by0, bx1, by1);
+    RXW(114); rx_union(&rx_dx0, &rx_dy0, &rx_dx1, &rx_dy1, bx0, by0, bx1, by1);
     rx_union(&rx_cx0, &rx_cy0, &rx_cx1, &rx_cy1, bx0, by0, bx1, by1);
     ws_spu_busy = 1;
     rx_nprims++;

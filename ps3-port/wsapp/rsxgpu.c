@@ -263,27 +263,35 @@ static void rx_upload(int x, int y, int w, int h)
     rx_up_pos += (bytes + 127) & ~127u;
 }
 
-/* find what the CPU changed in psxVuw since the shadow copy and send it to the RSX */
+/* find what the CPU changed in psxVuw since the shadow copy and send it to the RSX.  Consecutive changed rows are
+ * uploaded as one band (x range = union of their changes) so pixels the GPU drew elsewhere are not overwritten. */
+static void rx_sync_band(int y0, int y1, int x0, int x1)
+{
+    rx_flush();
+    rx_upload(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+    for (int y = y0; y <= y1; y++) memcpy(rx_shadow + y * 1024 + x0, psxVuw + y * 1024 + x0, (size_t)(x1 - x0 + 1) * 2);
+}
 static void rx_cpu_sync_up(void)
 {
     if (!rx_cpu_maybe || !rx_ok) return;
     rx_cpu_maybe = 0;
-    int y0 = -1, y1 = -1, x0 = 1024, x1 = -1;
+    int y0 = -1, x0 = 1024, x1 = -1;
     const u64 *a = (const u64 *)psxVuw, *b = (const u64 *)rx_shadow;
-    for (int y = 0; y < 512; y++) {
-        const u64 *ra = a + y * 256, *rb = b + y * 256;
+    for (int y = 0; y <= 512; y++) {
         int f = -1, l = -1;
-        for (int i = 0; i < 256; i++) if (ra[i] != rb[i]) { if (f < 0) f = i; l = i; }
-        if (f < 0) continue;
-        if (y0 < 0) y0 = y;
-        y1 = y;
-        if (f * 4 < x0) x0 = f * 4;
-        if (l * 4 + 3 > x1) x1 = l * 4 + 3;
+        if (y < 512) {
+            const u64 *ra = a + y * 256, *rb = b + y * 256;
+            for (int i = 0; i < 256; i++) if (ra[i] != rb[i]) { if (f < 0) f = i; l = i; }
+        }
+        if (f >= 0) {
+            if (y0 < 0) y0 = y;
+            if (f * 4 < x0) x0 = f * 4;
+            if (l * 4 + 3 > x1) x1 = l * 4 + 3;
+        } else if (y0 >= 0) {
+            rx_sync_band(y0, y - 1, x0, x1);
+            y0 = -1; x0 = 1024; x1 = -1;
+        }
     }
-    if (y0 < 0) return;
-    rx_flush();
-    rx_upload(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-    for (int y = y0; y <= y1; y++) memcpy(rx_shadow + y * 1024 + x0, psxVuw + y * 1024 + x0, (size_t)(x1 - x0 + 1) * 2);
 }
 
 /* CPU is about to read VRAM: bring the drawn area back to 1x */
@@ -291,6 +299,7 @@ void ws_rsx_readback(void)
 {
     if (!ws_rsx_on || !rx_ok) { ws_spu_busy = 0; return; }
     RXW(107); RXT("readback dirty %d,%d-%d,%d\n", rx_dx0, rx_dy0, rx_dx1, rx_dy1);
+    rx_cpu_sync_up();   /* CPU writes made since the last prim must reach the GPU before its data is read back over them */
     rx_cpu_maybe = 1;
     if (rx_dx1 > rx_dx0 && rx_dy1 > rx_dy0) {
         int x0 = rx_dx0, y0 = rx_dy0, w = rx_dx1 - rx_dx0, h = rx_dy1 - rx_dy0;

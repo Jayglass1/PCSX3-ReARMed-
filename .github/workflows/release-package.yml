@@ -1,0 +1,104 @@
+name: Release PCSX3-ReARMed CFW + GNPDRM packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-npdrm-package.yml
+    with:
+      package_name: PCSX3-ReARMed-${{ github.ref_name }}
+
+  publish:
+    name: Publish CFW + GNPDRM PKGs only
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download both package files
+        uses: actions/download-artifact@v8
+        with:
+          name: pcsx3rearmed-cfw-gnpdrm
+          path: dist
+
+      - name: Verify package-only release contents
+        shell: bash
+        env:
+          PACKAGE_NAME: PCSX3-ReARMed-${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cfw_pkg="dist/$PACKAGE_NAME.pkg"
+          gnpdrm_pkg="dist/$PACKAGE_NAME.gnpdrm.pkg"
+          test -s "$cfw_pkg"
+          test -s "$gnpdrm_pkg"
+
+          shopt -s nullglob
+          packages=( dist/*.pkg )
+          if (( ${#packages[@]} != 2 )); then
+            echo "::error::Expected exactly two .pkg files; found ${#packages[@]}"
+            find dist -maxdepth 1 -type f -printf '%f\n' || true
+            exit 1
+          fi
+          if find dist -mindepth 1 -maxdepth 1 -type f ! -name '*.pkg' -print -quit | grep -q .; then
+            echo "::error::Refusing to publish non-PKG release files"
+            exit 1
+          fi
+          for package in "$cfw_pkg" "$gnpdrm_pkg"; do
+            magic="$(od -An -N4 -tx1 "$package" | tr -d ' \n')"
+            if [[ "$magic" != "7f504b47" ]]; then
+              echo "::error::Invalid PS3 PKG header in $(basename "$package"): $magic"
+              exit 1
+            fi
+          done
+
+      - name: Create or refresh GitHub Release with both packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: PCSX3-ReARMed-${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          packages=( "dist/$PACKAGE_NAME.pkg" "dist/$PACKAGE_NAME.gnpdrm.pkg" )
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
+
+            # Replace all old assets so the release contains exactly this PKG pair.
+            while IFS= read -r asset_id; do
+              [ -z "$asset_id" ] || gh api -X DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(
+              gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+                --jq '.[].id'
+            )
+
+            gh release upload "$tag" "${packages[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${packages[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "PCSX3-ReARMed $tag" \
+              --generate-notes
+          fi
+
+          # Confirm that GitHub has exactly the two expected package assets.
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
+          actual_names="$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[].name' | sort)"
+          expected_names="$(printf '%s\n' \
+            "$PACKAGE_NAME.pkg" "$PACKAGE_NAME.gnpdrm.pkg" | sort)"
+          if [[ "$actual_names" != "$expected_names" ]]; then
+            echo "::error::Release assets differ from the expected CFW/GNPDRM pair"
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_names" "$actual_names"
+            exit 1
+          fi

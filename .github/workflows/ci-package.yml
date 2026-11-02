@@ -1,0 +1,21 @@
+name: Build PS3 CFW + GNPDRM packages
+
+on:
+  push:
+    branches:
+      - main
+      - ps3-port
+  pull_request:
+    branches:
+      - main
+      - ps3-port
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    uses: ./.github/workflows/build-npdrm-package.yml
+    with:
+      package_name: PCSX3-ReARMed-${{ github.sha }}

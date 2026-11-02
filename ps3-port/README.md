@@ -1,12 +1,42 @@
-# WiiStation PS3 port (PCSX-ReARMed lineage)
+# PCSX3-ReARMed PS3 port
 
-Standalone PS3 homebrew build (PSL1GHT, ppu-gcc 7.2.0).
+Standalone PlayStation 3 homebrew build (PSL1GHT, ppu-gcc 7.2.0), based on the PCSX-ReARMed lineage.
+
+- XMB title: `PCSX3-ReARMed`
+- PS3 TITLE_ID / PARAM.SFO app ID: `PCSX3REA1`
+- Package content ID: `UP0001-PCSX3REA1_00-0000000000000001`.
 
 - `wsps3/`  emulator core: PPC dynarec, SoftGPU, CHD (libchdr), SPU-assisted pieces
 - `wsapp/`  PS3 front-end (`main.c`: menu, RSX scaler, FXAA pass in `fx/`)
 - `build_ws.sh` builds `libws.a`; `build_app.sh <name>` builds the `.pkg`
 - `releases/` packages: v98 (FXAA default), v104 (SPU polygon renderer, FXAA 2x-16x, Turbo CD; tested good on hardware)
 - `host_test/` x86 test rig; `test_spu.c` checks the SPU polygon renderer against SoftGPU pixel for pixel
+
+## Automated CFW + GNPDRM packages
+
+Every CI build (pushes to `ps3-port`, pull requests targeting that branch, and
+manual dispatch) creates both package variants from one emulator build:
+
+- `PCSX3-ReARMed-<revision>.pkg`: regular CFW-installable package.
+- `PCSX3-ReARMed-<revision>.gnpdrm.pkg`: a copy of the regular package processed
+  with PS3DEV's `package_finalize` tool.
+
+The Actions artifact `pcsx3rearmed-cfw-gnpdrm` contains only these two package
+files; compiler outputs, logs, EBOOT.BIN, PARAM.SFO, and staging files are not
+uploaded. Each package is checked for a valid PS3 PKG header before upload.
+
+Pushing a version tag matching `v*` (for example, `v1.0.0`) runs the same
+builder and creates a GitHub Release containing exactly the CFW and GNPDRM
+packages. Updating an existing tagged release replaces its assets with that pair.
+
+The application ID is `PCSX3REA1` in the SFO, package content ID, and runtime
+install/data path. Its content ID is
+`UP0001-PCSX3REA1_00-0000000000000001`.
+
+The CI build uses the PS3DEV `nightly-2026-10-12` Linux X64 toolchain bundle on
+Ubuntu 24.04 (the bundle requires glibc 2.38) and a pinned RetroArch checkout for
+the `libretro-common` headers. The build scripts retain their existing local
+defaults, while allowing CI to override `PS3DEV`, `PSL1GHT`, and `PORTLIBS`.
 
 The SPU polygon renderer (`wsps3/spu/`) is on by default (Start toggles it); fights run at full speed.
 

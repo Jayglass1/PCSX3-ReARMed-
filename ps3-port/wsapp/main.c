@@ -1,4 +1,4 @@
-/* WiiStation PS3 - standalone PS3 homebrew host for the WiiStation core.
+/* PCSX3-ReARMed PS3 - standalone PS3 homebrew host for the PCSX-ReARMed core.
  * Video: RSX display buffers (CPU blit), audio: 48 kHz float port, input: ioPad. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +52,7 @@ void ws_probe2(char *buf, int n);
 static volatile unsigned run_count; static volatile int in_game;
 
 
-#define BASE "/dev_hdd0/game/WSTN00001/USRDIR"
+#define BASE "/dev_hdd0/game/PCSX3REA1/USRDIR"
 #define MARK "/dev_hdd0/tmp/wiistation_jit_pending"
 
 static volatile int want_exit;
@@ -751,7 +751,7 @@ static void menu(void)
         if (sel < top) top = sel;
         if (sel >= top + 10) top = sel - 9;
         clear_screen(0x00101830);
-        draw_text(40, 20, "WiiStation PS3", 0x00FFFFFF, 3);
+        draw_text(40, 20, "PCSX3-ReARMed", 0x00FFFFFF, 3);
         snprintf(line, sizeof line, "CPU: %s%s%s   [Triangle] change", use_dynarec == 2 ? "Lightrec (experimental)" : use_dynarec ? "Dynarec" : "Interpreter",
                  jit_state == -1 ? "  (JIT crashed last time - disabled)" : "",
                  (lr_crashed && use_dynarec != 2) ? "  (Lightrec did not exit cleanly last time)" : "");
@@ -795,7 +795,7 @@ int main(int argc, char **argv)
 {
     mkdir(BASE "/saves", 0777); mkdir(BASE "/system", 0777); mkdir(BASE "/roms", 0777);
     mkdir("/dev_hdd0/tmp", 0777);
-    log_line("WiiStation PS3 standalone app start, build " __DATE__ " " __TIME__);
+    log_line("PCSX3-ReARMed standalone app start, build " __DATE__ " " __TIME__);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sysutil_cb, NULL);
     if (!video_init()) { log_line("video init failed"); return 1; }
     hw_init();

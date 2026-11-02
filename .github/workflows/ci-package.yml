@@ -1,0 +1,20 @@
+name: Build PS3 NPDRM package
+
+on:
+  push:
+    branches:
+      - ps3-port
+      - ci/npdrm-package-workflows
+  pull_request:
+    branches:
+      - ps3-port
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    uses: ./.github/workflows/build-npdrm-package.yml
+    with:
+      package_name: PCSX3-ReARMed-${{ github.sha }}

@@ -1,0 +1,145 @@
+name: Build PCSX3-ReARMed NPDRM package
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Basename for the generated .pkg file (without extension)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build PS3 NPDRM PKG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout PCSX3-ReARMed
+        uses: actions/checkout@v6
+
+      - name: Checkout pinned RetroArch libretro-common headers
+        uses: actions/checkout@v6
+        with:
+          repository: libretro/RetroArch
+          ref: cbe5e51259a994db1fef41e6e368a0ae9276069a
+          path: ps3-port/RetroArch
+          sparse-checkout: |
+            libretro-common/include
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libelf-dev libgmp-dev libmpc3 libmpfr6 libncurses6 libssl-dev \
+            python3 python-is-python3 zlib1g-dev
+
+      - name: Restore PS3DEV toolchain cache
+        id: ps3dev-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ps3dev
+          key: ps3dev-nightly-2026-10-12-linux-X64
+
+      - name: Install pinned PS3DEV toolchain
+        if: steps.ps3dev-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ps3dev-linux-X64.tar.gz"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "https://github.com/ps3dev/ps3dev/releases/download/nightly-2026-10-12/ps3dev-linux-X64.tar.gz" \
+            --output "$archive"
+          gzip -t "$archive"
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          rm -f "$archive"
+          test -x "$RUNNER_TEMP/ps3dev/ppu/bin/ppu-gcc"
+          test -f "$RUNNER_TEMP/ps3dev/bin/sfo.xml"
+
+      - name: Configure PS3DEV environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PS3DEV="$RUNNER_TEMP/ps3dev"
+          export PSL1GHT="$PS3DEV"
+          export PORTLIBS="$PS3DEV/portlibs/ppu"
+          export PATH="$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin:$PATH"
+          echo "PS3DEV=$PS3DEV" >> "$GITHUB_ENV"
+          echo "PSL1GHT=$PSL1GHT" >> "$GITHUB_ENV"
+          echo "PORTLIBS=$PORTLIBS" >> "$GITHUB_ENV"
+          echo "$PS3DEV/bin" >> "$GITHUB_PATH"
+          echo "$PS3DEV/ppu/bin" >> "$GITHUB_PATH"
+          echo "$PS3DEV/spu/bin" >> "$GITHUB_PATH"
+          for tool in ppu-gcc ppu-ar ppu-strip sprxlinker make_self_npdrm sfo pkg; do
+            command -v "$tool" >/dev/null || {
+              echo "::error::Required PS3 tool not found on PATH: $tool"
+              exit 1
+            }
+          done
+          ppu-gcc --version | head -n 1
+
+      - name: Recreate the expected source layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /home/claude
+          if [ -e /home/claude/w ] && [ ! -L /home/claude/w ]; then
+            sudo rm -rf /home/claude/w
+          fi
+          sudo ln -sfn "$GITHUB_WORKSPACE/ps3-port" /home/claude/w
+          test -d /home/claude/w/wsps3
+          test -d /home/claude/w/wsapp
+          test -d /home/claude/w/RetroArch/libretro-common/include
+
+      - name: Build emulator core and NPDRM package
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ inputs.package_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PACKAGE_NAME" || "$PACKAGE_NAME" == *"/"* || "$PACKAGE_NAME" == *".."* ]]; then
+            echo "::error::Invalid package basename: $PACKAGE_NAME"
+            exit 1
+          fi
+          out="$GITHUB_WORKSPACE/artifacts"
+          rm -rf "$out"
+          mkdir -p "$out"
+
+          bash /home/claude/w/build_ws.sh
+          OUT="$out" bash /home/claude/w/build_app.sh "$PACKAGE_NAME"
+
+      - name: Verify package-only output
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=( "$GITHUB_WORKSPACE"/artifacts/*.pkg )
+          if (( ${#packages[@]} != 1 )); then
+            echo "::error::Expected exactly one .pkg file; found ${#packages[@]}"
+            find "$GITHUB_WORKSPACE/artifacts" -maxdepth 1 -type f -printf '%f\n' || true
+            exit 1
+          fi
+          if find "$GITHUB_WORKSPACE/artifacts" -mindepth 1 -maxdepth 1 -type f ! -name '*.pkg' -print -quit | grep -q .; then
+            echo "::error::The release output directory contains non-PKG files"
+            exit 1
+          fi
+          test -s "${packages[0]}"
+          magic="$(od -An -N4 -tx1 "${packages[0]}" | tr -d ' \n')"
+          if [[ "$magic" != "7f504b47" ]]; then
+            echo "::error::Output does not have a PS3 PKG header: $magic"
+            exit 1
+          fi
+          echo "Validated package: $(basename "${packages[0]}") ($(stat -c%s "${packages[0]}") bytes)"
+
+      - name: Upload package artifact (PKG files only)
+        uses: actions/upload-artifact@v7
+        with:
+          name: pcsx3rearmed-npdrm
+          path: artifacts/*.pkg
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

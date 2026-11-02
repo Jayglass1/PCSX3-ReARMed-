@@ -1,0 +1,87 @@
+name: Release PCSX3-ReARMed NPDRM package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-npdrm-package.yml
+    with:
+      package_name: PCSX3-ReARMed-${{ github.ref_name }}
+
+  publish:
+    name: Publish PKG-only GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: pcsx3rearmed-npdrm
+          path: dist
+
+      - name: Enforce PKG-only release contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=( dist/*.pkg )
+          if (( ${#packages[@]} != 1 )); then
+            echo "::error::Expected exactly one .pkg file; found ${#packages[@]}"
+            find dist -maxdepth 1 -type f -printf '%f\n' || true
+            exit 1
+          fi
+          if find dist -mindepth 1 -maxdepth 1 -type f ! -name '*.pkg' -print -quit | grep -q .; then
+            echo "::error::Refusing to publish non-PKG release files"
+            exit 1
+          fi
+          test -s "${packages[0]}"
+
+      - name: Create or refresh GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          packages=( dist/*.pkg )
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
+
+            # Remove any old non-PKG assets so the release remains package-only.
+            while IFS= read -r asset_id; do
+              [ -z "$asset_id" ] || gh api -X DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(
+              gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+                --jq '.[] | select(.name | endswith(".pkg") | not) | .id'
+            )
+
+            gh release upload "$tag" "${packages[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${packages[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "PCSX3-ReARMed $tag" \
+              --generate-notes
+          fi
+
+          # Final remote check: no non-PKG release assets are allowed.
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
+          non_pkg_count="$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '[.[] | select(.name | endswith(".pkg") | not)] | length')"
+          if [[ "$non_pkg_count" != "0" ]]; then
+            echo "::error::GitHub Release contains $non_pkg_count non-PKG asset(s)"
+            exit 1
+          fi

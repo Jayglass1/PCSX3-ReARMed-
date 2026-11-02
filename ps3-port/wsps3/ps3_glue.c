@@ -42,8 +42,6 @@ char ps3_mcd1_buf[128*1024];
 char ps3_mcd2_buf[128*1024];
 char ps3_spu_buf[512*1024];
 char ps3_rec_data[4*1024*1024] __attribute__((aligned(128)));
-char pSpuBuffer[WII_SPU_FREQ];
-char XABuf[WII_SPU_FREQ * sizeof(uint32_t) * 2];
 
 /* ------------------------------------------------------------------ */
 /* config globals (wiiSXconfig.h)                                       */
@@ -66,7 +64,7 @@ signed char autoSaveLoaded = 0;
 char fpsInfo[32];
 char txtbuffer[1024];
 PcsxConfig Config;
-PadDataS pad, lastport1, lastport2;
+PadDataS lastport1, lastport2;
 extern R3000Acpu psxLightrec;   /* lightrec.c */
 int lightrec_mmap(void *p, unsigned a, unsigned l) { return 0; }
 
